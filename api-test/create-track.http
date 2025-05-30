@@ -1,0 +1,19 @@
+POST http://localhost:8080/mostPlayedTracks
+content-Type: application/json
+
+{
+    "spotify_song_id": "6rqhFgbbKwnb9MLmUQDhG6",
+    "track_name": "Dark Angel",
+    "artist_name": "Provoker",
+    "album_name": "Body Jumper",
+    "genre": "Darkwave",
+    "preview_url": "https://p.scdn.co/mp3-preview/example123",
+    "album_cover_url": "https://i.scdn.co/image/ab67616d00001e02examplecover",
+    "play_count": 3,
+    "first_played": "2025-05-01T22:00:00Z",
+    "last_played": "2025-05-04T01:15:00Z",
+    "month_year": "2025-05",
+    "time_of_day": "Late Night",
+    "mood": "Reflective",
+    "activity": "Coding"
+}
