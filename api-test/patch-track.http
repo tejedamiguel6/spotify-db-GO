@@ -1,0 +1,7 @@
+PATCH http://localhost:8080/mostPlayedTracks/track/47nLldpeXdeWbRrdeaYvdq
+Content-Type: application/json
+
+{
+    "play_count": 12,
+    "last_played": "2026-05-04T01:15:00Z"
+}
