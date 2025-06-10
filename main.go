@@ -37,15 +37,95 @@ func main() {
 	/* NEW: endpoint to store (or rotate) refresh_token */
 	router.POST("/save-refresh", saveRefresh)
 
+	router.POST("/fetch-historical", fetchHistoricalData)
+
 	/* NEW: start the background cron in its own goroutine */
 	go startSpotifyCron()
 
 	router.Run(":8080")
 }
 
-/* ---------- background ticker ---------- */
+/* ---------- historical data fetch ---------- */
+func fetchHistoricalData(c *gin.Context) {
+	refreshTok, err := db.GetRefreshToken()
+	if err != nil || refreshTok == "" {
+		c.JSON(400, gin.H{"error": "no refresh token available"})
+		return
+	}
+
+	accessTok, newRefresh, err := spotify.RefreshAccessToken(refreshTok)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to refresh access token"})
+		return
+	}
+	if newRefresh != nil && *newRefresh != refreshTok {
+		_ = db.SaveOrUpdateRefreshToken(*newRefresh)
+	}
+
+	// Calculate 6 months ago
+	sixMonthsAgo := time.Now().AddDate(0, -6, 0)
+
+	fmt.Printf("Starting historical fetch from %s to now\n", sixMonthsAgo.Format(time.RFC3339))
+
+	items, err := spotify.GetRecentlyPlayedSince(accessTok, sixMonthsAgo)
+	if err != nil {
+		fmt.Printf("Historical fetch error: %v\n", err)
+		c.JSON(500, gin.H{"error": "failed to fetch historical data"})
+		return
+	}
+
+	success := 0
+	errors := 0
+
+	for _, it := range items {
+		artist := ""
+		if len(it.Track.Artists) > 0 {
+			artist = it.Track.Artists[0].Name
+		}
+		err = models.InsertRecentlyPlayed(
+			it.Track.ID,
+			it.Track.Name,
+			artist,
+			it.Track.Album.Name,
+			it.PlayedAt,
+		)
+		if err != nil {
+			errors++
+			fmt.Printf("Insert error for track %s: %v\n", it.Track.Name, err)
+		} else {
+			success++
+		}
+	}
+
+	fmt.Printf("Historical fetch complete: %d total tracks, %d successful, %d errors\n",
+		len(items), success, errors)
+
+	c.JSON(200, gin.H{
+		"message":      "historical fetch complete",
+		"total_tracks": len(items),
+		"successful":   success,
+		"errors":       errors,
+	})
+}
+
+/* ---------- enhanced background ticker ---------- */
 func startSpotifyCron() {
-	ticker := time.NewTicker(1 * time.Minute)
+	// Check if we need to do initial historical fetch
+	go func() {
+		time.Sleep(5 * time.Second) // Wait for server to start up
+
+		hasData, err := db.HasHistoricalData()
+		if err != nil {
+			fmt.Printf("Error checking historical data: %v\n", err)
+			return
+		}
+
+		if !hasData {
+			fmt.Println("No historical data found. Consider calling /fetch-historical endpoint to populate initial data.")
+		}
+	}()
+
+	ticker := time.NewTicker(5 * time.Minute) // Increased to 5 minutes to be more API-friendly
 	defer ticker.Stop()
 
 	for range ticker.C {
@@ -64,6 +144,7 @@ func startSpotifyCron() {
 			_ = db.SaveOrUpdateRefreshToken(*newRefresh)
 		}
 
+		// For regular cron job, just get recent 50 tracks
 		items, err := spotify.GetRecentlyPlayed(accessTok, 50)
 		if err != nil {
 			fmt.Println("cron: recently-played error:", err)
@@ -85,11 +166,10 @@ func startSpotifyCron() {
 				it.PlayedAt,
 			)
 			if err != nil {
-				fmt.Println("upsert error:", err) // <‑‑ temporary log
+				fmt.Println("upsert error:", err)
 			} else {
 				success++
 			}
-
 		}
 		fmt.Printf("cron: stored %d plays (%d new/updated) %s\n",
 			len(items), success, time.Now().Format(time.Kitchen))

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
@@ -140,4 +141,34 @@ func createDomainTables(pool *pgxpool.Pool) {
 	if _, err := pool.Exec(ctx, sql3); err != nil {
 		log.Fatalf("Failed to create plays: %v\n", err)
 	}
+}
+
+func GetLatestPlayedAt() (time.Time, error) {
+	var latestTime time.Time
+
+	query := `
+		SELECT COALESCE(MAX(played_at), '1970-01-01'::timestamp) 
+		FROM recently_played
+	`
+
+	err := Pool.QueryRow(context.Background(), query).Scan(&latestTime)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to get latest played_at: %v", err)
+	}
+
+	return latestTime, nil
+}
+
+// Check if we have any data in recently_played table
+func HasHistoricalData() (bool, error) {
+	var count int
+
+	query := `SELECT COUNT(*) FROM recently_played`
+
+	err := Pool.QueryRow(context.Background(), query).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("failed to check historical data: %v", err)
+	}
+
+	return count > 0, nil
 }
