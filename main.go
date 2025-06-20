@@ -29,6 +29,7 @@ func main() {
 
 	/* -------- API routes -------- */
 	router.GET("/mostPlayedTracks", handlers.GetMostPlayedTracks)
+	router.GET("/recently-played-tracks", handlers.RecentlyPlayedTracks)
 	router.POST("/mostPlayedTracks", handlers.CreateTrack)
 	router.PATCH("/mostPlayedTracks/track/:spotify_song_id", handlers.UpdateTrack)
 

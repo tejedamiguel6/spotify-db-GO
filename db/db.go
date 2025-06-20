@@ -40,7 +40,7 @@ func InitDB() {
 	seedAuthRow(pool)
 
 	// 2) Drop only our play-tracking tables, leaving spotify_auth intact
-	dropDomainTables(pool)
+	// dropDomainTables(pool)
 
 	// 3) Recreate the domain tables from scratch
 	createDomainTables(pool)
@@ -72,19 +72,19 @@ func seedAuthRow(pool *pgxpool.Pool) {
 	}
 }
 
-func dropDomainTables(pool *pgxpool.Pool) {
-	// only drop the tables we use to track plays
-	sql := `
-    DROP TABLE IF EXISTS
-      plays,
-      recently_played,
-      tracks_on_repeat
-    CASCADE;
-    `
-	if _, err := pool.Exec(context.Background(), sql); err != nil {
-		log.Fatalf("Failed to drop domain tables: %v\n", err)
-	}
-}
+// func dropDomainTables(pool *pgxpool.Pool) {
+// 	// only drop the tables we use to track plays
+// 	sql := `
+//     DROP TABLE IF EXISTS
+//       plays,
+//       recently_played,
+//       tracks_on_repeat
+//     CASCADE;
+//     `
+// 	if _, err := pool.Exec(context.Background(), sql); err != nil {
+// 		log.Fatalf("Failed to drop domain tables: %v\n", err)
+// 	}
+// }
 
 func createDomainTables(pool *pgxpool.Pool) {
 	ctx := context.Background()
@@ -112,6 +112,34 @@ func createDomainTables(pool *pgxpool.Pool) {
 		log.Fatalf("Failed to create tracks_on_repeat: %v\n", err)
 	}
 
+	// ALTER TABLE to ensure fields exist even if table was created earlier
+	if _, err := pool.Exec(ctx, `
+ALTER TABLE tracks_on_repeat
+ADD COLUMN IF NOT EXISTS album_cover_url TEXT;
+`); err != nil {
+		log.Fatalf("Failed to add album_cover_url: %v\n", err)
+	}
+
+	if _, err := pool.Exec(ctx, `
+ALTER TABLE tracks_on_repeat
+ADD COLUMN IF NOT EXISTS genre TEXT;
+`); err != nil {
+		log.Fatalf("Failed to add genre: %v\n", err)
+	}
+
+	if _, err := pool.Exec(ctx, `
+	ALTER TABLE recently_played
+	ADD COLUMN IF NOT EXISTS album_cover_url TEXT;
+	`); err != nil {
+		log.Fatalf("Failed to add album_cover_url: %v\n", err)
+	}
+
+	if _, err := pool.Exec(ctx, `
+	ALTER TABLE recently_played
+	ADD COLUMN IF NOT EXISTS genre TEXT;
+	`); err != nil {
+		log.Fatalf("Failed to add genre: %v\n", err)
+	}
 	// 2) recently_played logs every single play (cron job)
 	sql2 := `
     CREATE TABLE IF NOT EXISTS recently_played (

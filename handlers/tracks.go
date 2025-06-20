@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -184,8 +185,24 @@ func CollectRecentTracks() {
 		}
 
 		artist := ""
+		genre := ""
+		albumCoverURL := ""
+
 		if len(it.Track.Artists) > 0 {
-			artist = it.Track.Artists[0].Name
+			artistID := it.Track.Artists[0].ID
+			artistObj, err := spotify.GetArtistById(accessTok, artistID)
+			if err != nil {
+				log.Printf("Failed to fetch artist %s: %v", artistID, err)
+			} else if artistObj != nil {
+				artist = artistObj.Name
+				if len(artistObj.Genres) > 0 {
+					genre = strings.Join(artistObj.Genres, ", ")
+				}
+			}
+		}
+
+		if len(it.Track.Album.Images) > 0 {
+			albumCoverURL = it.Track.Album.Images[0].URL
 		}
 
 		err = models.InsertRecentlyPlayed(
@@ -193,6 +210,8 @@ func CollectRecentTracks() {
 			it.Track.Name,
 			artist,
 			it.Track.Album.Name,
+			albumCoverURL,
+			genre,
 			it.PlayedAt,
 		)
 		if err != nil {
@@ -287,4 +306,22 @@ func UpdateTrack(context *gin.Context) {
 	}
 
 	context.JSON(http.StatusOK, gin.H{"message": "track updated"})
+}
+
+func RecentlyPlayedTracks(context *gin.Context) {
+	recentPlayedTracks, err := models.GetAllRecentPlayedHistory(db.Pool)
+	if err != nil {
+		fmt.Println("ERROR HERE IN HANDLERS:", err)
+		context.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to fetch recently played tracks",
+			"details": err.Error(),
+		})
+		return
+	}
+	context.JSON(http.StatusOK, gin.H{
+		"tracks":  recentPlayedTracks,
+		"count":   len(recentPlayedTracks),
+		"message": "succescfully retrieved tracks",
+	})
+
 }

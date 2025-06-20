@@ -55,21 +55,58 @@ func RefreshAccessToken(refreshToken string) (accessToken string, newRefreshTok 
 
 type PlayedItem struct {
 	Track struct {
-		ID      string                  `json:"id"`
-		Name    string                  `json:"name"`
-		Album   struct{ Name string }   `json:"album"`
-		Artists []struct{ Name string } `json:"artists"`
+		ID    string `json:"id"`
+		Name  string `json:"name"`
+		Album struct {
+			Name   string       `json:"name"`
+			Images []AlbumImage `json:"images"`
+		} `json:"album"`
+		Artists []struct {
+			ID   string
+			Name string
+		} `json:"artists"`
 	} `json:"track"`
 	PlayedAt time.Time `json:"played_at"`
 }
 
+type AlbumImage struct {
+	URL    string `json:"url"`
+	Height int    `json:"height"`
+	Width  int    `json:"width"`
+}
+
 type RecentlyPlayedResponse struct {
-	Items   []PlayedItem `json: "items"`
-	Next    *string      `json: "next"`
+	Items   []PlayedItem `json:"items"`
+	Next    *string      `json:"next"`
 	Cursors struct {
 		After  *string `json:"after"`
 		Before *string `json:"before"`
 	} `json:"cursors"`
+}
+
+// this is to get the genre of the artist
+type Artist struct {
+	ID     string   `json:"id"`
+	Name   string   `json:"name"`
+	Genres []string `json:"genres"`
+	Images []struct {
+		URL    string `json:"url"`
+		Height int    `json:"height"`
+		Width  int    `json:"width"`
+	}
+}
+
+type TrackDetails struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Artists []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	} `json:"artists"`
+	Album struct {
+		Name   string       `json:"name"`
+		Images []AlbumImage `json:"images"`
+	} `json:"album"`
 }
 
 func GetRecentlyPlayed(accessToken string, limit int) ([]PlayedItem, error) {
@@ -94,20 +131,11 @@ func GetRecentlyPlayed(accessToken string, limit int) ([]PlayedItem, error) {
 	return body.Items, nil
 }
 
-// New function with cursor support
-func GetRecentlyPlayedWithCursor(accessToken string, limit int, before string) (*RecentlyPlayedResponse, error) {
-	baseURL := "https://api.spotify.com/v1/me/player/recently-played"
-	params := url.Values{}
-	params.Set("limit", strconv.Itoa(limit))
+// gets the artist by ID
+func GetArtistById(accessToken, artistID string) (*Artist, error) {
+	req, _ := http.NewRequest("GET",
+		"https://api.spotify.com/v1/artists/"+artistID, nil)
 
-	if before != "" {
-		params.Set("before", before)
-	}
-
-	fullURL := baseURL + "?" + params.Encode()
-	fmt.Printf("Making request to: %s\n", fullURL)
-
-	req, _ := http.NewRequest("GET", fullURL, nil)
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
 	res, err := http.DefaultClient.Do(req)
@@ -117,92 +145,43 @@ func GetRecentlyPlayedWithCursor(accessToken string, limit int, before string) (
 	defer res.Body.Close()
 
 	if res.StatusCode != http.StatusOK {
-		return nil, errors.New("spotify: " + res.Status)
+		return nil, fmt.Errorf("spotify failed to get artist %s: %s", artistID, res.Status)
 	}
 
-	var response RecentlyPlayedResponse
-	if err := json.NewDecoder(res.Body).Decode(&response); err != nil {
+	var artist Artist
+	if err := json.NewDecoder(res.Body).Decode(&artist); err != nil {
 		return nil, err
 	}
 
-	return &response, nil
+	// fmt.Println("artist-???", artist)
+
+	return &artist, nil
+
 }
 
-// Function to get all tracks from a specific time period
-func GetRecentlyPlayedSince(accessToken string, since time.Time) ([]PlayedItem, error) {
-	var allItems []PlayedItem
-	limit := 50 // max allowed by Spotify
-	cursor := ""
-	pageCount := 0
+func GetTrack(accessToken, trackID string) (*TrackDetails, error) {
+	req, _ := http.NewRequest("GET",
+		"https://api.spotify.com/v1/tracks/"+trackID, nil)
 
-	fmt.Printf("Fetching tracks since: %s\n", since.Format(time.RFC3339))
+	req.Header.Set("Authorization", "Bearer "+accessToken)
 
-	for {
-		pageCount++
-		fmt.Printf("Fetching page %d with cursor: '%s'\n", pageCount, cursor)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
 
-		response, err := GetRecentlyPlayedWithCursor(accessToken, limit, cursor)
-		if err != nil {
-			return nil, fmt.Errorf("error fetching page: %v", err)
-		}
+	if res.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("spotify failed to get track id %s: %s", trackID, res.Status)
 
-		// Debug: Print the response structure
-		fmt.Printf("API Response - Items count: %d\n", len(response.Items))
-		if response.Cursors.Before != nil {
-			fmt.Printf("API Response - Before cursor: '%s'\n", *response.Cursors.Before)
-		} else {
-			fmt.Printf("API Response - Before cursor: nil\n")
-		}
-		if response.Cursors.After != nil {
-			fmt.Printf("API Response - After cursor: '%s'\n", *response.Cursors.After)
-		} else {
-			fmt.Printf("API Response - After cursor: nil\n")
-		}
-
-		if len(response.Items) == 0 {
-			fmt.Println("No more items returned")
-			break
-		}
-
-		// Check if we've gone back far enough
-		oldestInThisBatch := response.Items[len(response.Items)-1].PlayedAt
-		fmt.Printf("Oldest in this batch: %s (target: %s)\n",
-			oldestInThisBatch.Format(time.RFC3339), since.Format(time.RFC3339))
-
-		if oldestInThisBatch.Before(since) {
-			// Filter out items older than our target date
-			for _, item := range response.Items {
-				if item.PlayedAt.After(since) || item.PlayedAt.Equal(since) {
-					allItems = append(allItems, item)
-				}
-			}
-			fmt.Printf("Reached target date. Total items collected: %d\n", len(allItems))
-			break
-		}
-
-		// Add all items from this batch
-		allItems = append(allItems, response.Items...)
-		fmt.Printf("Collected %d items (total: %d). Oldest in batch: %s\n",
-			len(response.Items), len(allItems), oldestInThisBatch.Format(time.RFC3339))
-
-		// Check if there's a next page
-		if response.Cursors.Before == nil || *response.Cursors.Before == "" {
-			fmt.Printf("No more pages available (Before cursor is %v)\n", response.Cursors.Before)
-			break
-		}
-
-		// Safety check to prevent infinite loops
-		if pageCount > 1000 {
-			fmt.Printf("Reached maximum page limit (1000), stopping\n")
-			break
-		}
-
-		cursor = *response.Cursors.Before
-
-		// Add a small delay to be respectful to the API
-		time.Sleep(200 * time.Millisecond)
 	}
 
-	fmt.Printf("Final total: %d tracks collected across %d pages\n", len(allItems), pageCount)
-	return allItems, nil
+	var track TrackDetails
+	if err := json.NewDecoder(res.Body).Decode(&track); err != nil {
+		return nil, err
+	}
+
+	fmt.Println("these are the @@@TRACKD, ", track)
+	return &track, nil
+
 }
