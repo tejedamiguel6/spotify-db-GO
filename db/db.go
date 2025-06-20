@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
@@ -39,7 +40,7 @@ func InitDB() {
 	seedAuthRow(pool)
 
 	// 2) Drop only our play-tracking tables, leaving spotify_auth intact
-	dropDomainTables(pool)
+	// dropDomainTables(pool)
 
 	// 3) Recreate the domain tables from scratch
 	createDomainTables(pool)
@@ -71,19 +72,19 @@ func seedAuthRow(pool *pgxpool.Pool) {
 	}
 }
 
-func dropDomainTables(pool *pgxpool.Pool) {
-	// only drop the tables we use to track plays
-	sql := `
-    DROP TABLE IF EXISTS
-      plays,
-      recently_played,
-      tracks_on_repeat
-    CASCADE;
-    `
-	if _, err := pool.Exec(context.Background(), sql); err != nil {
-		log.Fatalf("Failed to drop domain tables: %v\n", err)
-	}
-}
+// func dropDomainTables(pool *pgxpool.Pool) {
+// 	// only drop the tables we use to track plays
+// 	sql := `
+//     DROP TABLE IF EXISTS
+//       plays,
+//       recently_played,
+//       tracks_on_repeat
+//     CASCADE;
+//     `
+// 	if _, err := pool.Exec(context.Background(), sql); err != nil {
+// 		log.Fatalf("Failed to drop domain tables: %v\n", err)
+// 	}
+// }
 
 func createDomainTables(pool *pgxpool.Pool) {
 	ctx := context.Background()
@@ -111,6 +112,34 @@ func createDomainTables(pool *pgxpool.Pool) {
 		log.Fatalf("Failed to create tracks_on_repeat: %v\n", err)
 	}
 
+	// ALTER TABLE to ensure fields exist even if table was created earlier
+	if _, err := pool.Exec(ctx, `
+ALTER TABLE tracks_on_repeat
+ADD COLUMN IF NOT EXISTS album_cover_url TEXT;
+`); err != nil {
+		log.Fatalf("Failed to add album_cover_url: %v\n", err)
+	}
+
+	if _, err := pool.Exec(ctx, `
+ALTER TABLE tracks_on_repeat
+ADD COLUMN IF NOT EXISTS genre TEXT;
+`); err != nil {
+		log.Fatalf("Failed to add genre: %v\n", err)
+	}
+
+	if _, err := pool.Exec(ctx, `
+	ALTER TABLE recently_played
+	ADD COLUMN IF NOT EXISTS album_cover_url TEXT;
+	`); err != nil {
+		log.Fatalf("Failed to add album_cover_url: %v\n", err)
+	}
+
+	if _, err := pool.Exec(ctx, `
+	ALTER TABLE recently_played
+	ADD COLUMN IF NOT EXISTS genre TEXT;
+	`); err != nil {
+		log.Fatalf("Failed to add genre: %v\n", err)
+	}
 	// 2) recently_played logs every single play (cron job)
 	sql2 := `
     CREATE TABLE IF NOT EXISTS recently_played (
@@ -140,4 +169,88 @@ func createDomainTables(pool *pgxpool.Pool) {
 	if _, err := pool.Exec(ctx, sql3); err != nil {
 		log.Fatalf("Failed to create plays: %v\n", err)
 	}
+}
+
+func GetLatestPlayedAt() (time.Time, error) {
+	var latestTime time.Time
+
+	query := `
+		SELECT COALESCE(MAX(played_at), '1970-01-01'::timestamp) 
+		FROM recently_played
+	`
+
+	err := Pool.QueryRow(context.Background(), query).Scan(&latestTime)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to get latest played_at: %v", err)
+	}
+
+	return latestTime, nil
+}
+
+// GetTrackCountSince returns how many tracks we have since a given date
+func GetTrackCountSince(since time.Time) (int, error) {
+	var count int
+
+	query := `SELECT COUNT(*) FROM recently_played WHERE played_at >= $1`
+
+	err := Pool.QueryRow(context.Background(), query, since).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count tracks since %v: %v", since, err)
+	}
+
+	return count, nil
+}
+
+// GetTrackCountByDateRange returns counts grouped by date for analytics
+func GetTrackCountByDateRange() ([]struct {
+	Date  string `json:"date"`
+	Count int    `json:"count"`
+}, error) {
+	query := `
+		SELECT 
+			DATE(played_at) as date,
+			COUNT(*) as count
+		FROM recently_played 
+		WHERE played_at >= NOW() - INTERVAL '30 days'
+		GROUP BY DATE(played_at)
+		ORDER BY date DESC
+	`
+
+	rows, err := Pool.Query(context.Background(), query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get date range counts: %v", err)
+	}
+	defer rows.Close()
+
+	var results []struct {
+		Date  string `json:"date"`
+		Count int    `json:"count"`
+	}
+
+	for rows.Next() {
+		var result struct {
+			Date  string `json:"date"`
+			Count int    `json:"count"`
+		}
+		if err := rows.Scan(&result.Date, &result.Count); err != nil {
+			return nil, err
+		}
+		results = append(results, result)
+	}
+
+	return results, nil
+}
+
+// Check if we have any data in recently_played table
+func HasHistoricalData() (bool, error) {
+	var count int
+
+	query := `SELECT COUNT(*) FROM recently_played`
+
+	err := Pool.QueryRow(context.Background(), query).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("failed to check historical data: %v", err)
+	}
+
+	return count > 0, nil
 }

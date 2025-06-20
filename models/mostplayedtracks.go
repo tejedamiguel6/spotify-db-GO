@@ -19,6 +19,7 @@ type Track struct {
 	PreviewURL    string    `json:"preview_url"`
 	AlbumCoverURL string    `json:"album_cover_url"` // Optional
 	PlayCount     int       `json:"play_count"`      // Default to 0 if not provided
+	PlayedAt      time.Time `json:"played_at"`
 	FirstPlayed   time.Time `json:"first_played"`
 	LastPlayed    time.Time `json:"last_played"`
 	MonthYear     string    `json:"month_year"`
@@ -27,14 +28,15 @@ type Track struct {
 	Activity      string    `json:"activity"`
 }
 
-var tracks = []Track{}
+type RecentlyPlayedTrack struct {
+	ID            int    `json:"id"`
+	SpotifySongID string `json:"spotify_song_id" binding:"required"`
+	TrackName     string `json:"track_name" binding:"required"`
+	ArtistName    string `json:"artist_name" binding:"required"`
+	AlbumName     string `json:"album_name" binding:"required"`
 
-// method
-func (t Track) SaveToMemory() {
-	// add to a database later
-	fmt.Println("SAVED TO MEMORY")
-	tracks = append(tracks, t)
-
+	PlayedAt time.Time `json:"played_at"`
+	Source   string    `json:"source"`
 }
 
 func (t Track) SaveToDatabase(pool *pgxpool.Pool) error {
@@ -154,7 +156,7 @@ func GetAllTracksonRepeat(pool *pgxpool.Pool) []Track {
 
 func GetSingleTrack(pool *pgxpool.Pool, spotifyID string) (*Track, error) {
 	// might need to edit this serialization since im using postgres
-	query := "SELECT * FROM tracks WHERE spotify_song_id  = $1"
+	query := "SELECT * FROM tracks_on_repeat WHERE spotify_song_id  = $1"
 
 	row := pool.QueryRow(context.Background(), query, spotifyID)
 	var t Track
@@ -208,5 +210,54 @@ func (t Track) UpdateTrackDB(pool *pgxpool.Pool) error {
 
 	fmt.Println("Track updated successfully.")
 	return nil
+
+}
+
+// function that gets most recent plays from db
+func GetAllRecentPlayedHistory(pool *pgxpool.Pool) ([]RecentlyPlayedTrack, error) {
+	query := `
+		SELECT 
+			id,
+			spotify_song_id,
+			track_name,
+			artist_name,
+			album_name,
+			played_at,
+			source
+		FROM recently_played
+		ORDER BY played_at DESC
+	`
+
+	fmt.Println("query--->", query)
+
+	rows, err := pool.Query(context.Background(), query)
+	if err != nil {
+		fmt.Println("Failed to query recently_played:", err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []RecentlyPlayedTrack
+
+	for rows.Next() {
+		var rpt RecentlyPlayedTrack
+
+		err := rows.Scan(
+			&rpt.ID,
+			&rpt.SpotifySongID,
+			&rpt.TrackName,
+			&rpt.ArtistName,
+			&rpt.AlbumName,
+			&rpt.PlayedAt,
+			&rpt.Source,
+		)
+		if err != nil {
+			fmt.Println("Error scanning row:", err)
+			continue
+		}
+		results = append(results, rpt)
+	}
+
+	return results, nil
 
 }
