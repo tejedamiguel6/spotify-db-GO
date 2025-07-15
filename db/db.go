@@ -140,6 +140,14 @@ ADD COLUMN IF NOT EXISTS genre TEXT;
 	`); err != nil {
 		log.Fatalf("Failed to add genre: %v\n", err)
 	}
+
+	// if _, err := pool.Exec(ctx, `
+	// 	ALTER TABLE recently_played
+	// 	DROP COLUMN play_count
+	// `); err != nil {
+	// 	log.Fatalf("Failed to add genre: %v\n", err)
+	// }
+
 	// 2) recently_played logs every single play (cron job)
 	sql2 := `
     CREATE TABLE IF NOT EXISTS recently_played (
@@ -169,6 +177,34 @@ ADD COLUMN IF NOT EXISTS genre TEXT;
 	if _, err := pool.Exec(ctx, sql3); err != nil {
 		log.Fatalf("Failed to create plays: %v\n", err)
 	}
+
+	// create recently liked songs
+	sql4 := `
+	 CREATE TABLE IF NOT EXISTS  recently_liked (
+		id SERIAL PRIMARY KEY,
+		spotify_song_id TEXT NOT NULL,
+		added_at TIMESTAMP NOT NULL,
+		track_name TEXT NOT NULL,
+		track_popularity INTEGER,
+		
+		album_name TEXT,
+		album_type TEXT,
+		album_total_tracks INTEGER,
+		album_release_date TEXT,
+		album_release_date_precision TEXT,
+
+		album_cover_url TEXT,
+		album_cover_height INTEGER,
+		album_cover_width INTEGER,
+
+		artist_id TEXT,
+		artist_name TEXT,
+		artist_href TEXT,
+		artist_uri TEXT
+);`
+	if _, err := pool.Exec(ctx, sql4); err != nil {
+		log.Fatalf("Failed to create RECENTLY_LIKED", err)
+	}
 }
 
 func GetLatestPlayedAt() (time.Time, error) {
@@ -185,6 +221,23 @@ func GetLatestPlayedAt() (time.Time, error) {
 	}
 
 	return latestTime, nil
+}
+
+// GetLatestAddedAt returns the most recent added_at timestamp from recently_liked
+func GetLatestAddedAt() (time.Time, error) {
+	var latest time.Time
+
+	query := `
+		SELECT COALESCE(MAX(added_at), '1970-01-01'::timestamp)
+		FROM recently_liked
+	`
+
+	err := Pool.QueryRow(context.Background(), query).Scan(&latest)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to get latest added_at: %v", err)
+	}
+
+	return latest, nil
 }
 
 // GetTrackCountSince returns how many tracks we have since a given date

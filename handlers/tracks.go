@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -124,6 +125,8 @@ func StartSpotifyCron() {
 
 			time.Sleep(interval)
 			CollectRecentTracks()
+			CollectSavedTracks()
+
 		}
 	}()
 }
@@ -204,6 +207,8 @@ func CollectRecentTracks() {
 		if len(it.Track.Album.Images) > 0 {
 			albumCoverURL = it.Track.Album.Images[0].URL
 		}
+
+		// checks for existing track
 
 		err = models.InsertRecentlyPlayed(
 			it.Track.ID,
@@ -325,3 +330,195 @@ func RecentlyPlayedTracks(context *gin.Context) {
 	})
 
 }
+
+// function to get all saved tracks
+func CollectSavedTracks() {
+	// Get refresh token
+	refreshTok, err := db.GetRefreshToken()
+	if err != nil || refreshTok == "" {
+		fmt.Println("CollectSavedTracks: no refresh token stored yet")
+		return
+	}
+
+	// Exchange for access token
+	accessTok, newRefresh, err := spotify.RefreshAccessToken(refreshTok)
+	if err != nil {
+		fmt.Println("CollectSavedTracks: refresh error:", err)
+		return
+	}
+	if newRefresh != nil && *newRefresh != refreshTok {
+		_ = db.SaveOrUpdateRefreshToken(*newRefresh)
+	}
+
+	// Get latest added_at timestamp from DB
+	latestAddedAt, err := db.GetLatestAddedAt()
+	if err != nil {
+		fmt.Printf("⚠️ Error getting latest added_at: %v\n", err)
+		latestAddedAt = time.Time{}
+	}
+
+	success := 0
+	skipped := 0
+	var newest, oldest time.Time
+
+	offset := 0
+	limit := 50
+
+	for {
+		page, err := spotify.GetUserSavedTracksPage(accessTok, offset, limit)
+		if err != nil {
+			fmt.Printf("❌ Failed to fetch saved tracks: %v\n", err)
+			break
+		}
+
+		if len(page.Items) == 0 {
+			break
+		}
+
+		for _, item := range page.Items {
+			parsedAddedAt, err := time.Parse(time.RFC3339, item.AddedAt)
+			if err != nil {
+				continue
+			}
+
+			// ✅ Early exit if this item is older or equal to our latest saved
+			if !latestAddedAt.IsZero() && !parsedAddedAt.After(latestAddedAt) {
+				fmt.Println("🎯 Already up to date — stopping fetch early.")
+				goto DONE
+			}
+
+			track := item.Track
+			if len(track.Artists) == 0 || len(track.Album.Images) == 0 {
+				continue // skip incomplete data
+			}
+
+			artist := track.Artists[0]
+			album := track.Album
+			image := album.Images[0]
+
+			err = models.InsertRecentlyLiked(
+				track.ID,
+				track.Name,
+				strconv.Itoa(track.Popularity),
+				album.Name,
+				album.AlbumType,
+				image.URL,
+				album.ReleaseDate,
+				album.ReleaseDatePrecision,
+				artist.Name,
+				artist.ID,
+				artist.Href,
+				artist.URI,
+				album.TotalTracks,
+				image.Width,
+				image.Height,
+				parsedAddedAt,
+			)
+			if err != nil {
+				if !strings.Contains(err.Error(), "duplicate") {
+					fmt.Printf("InsertRecentlyLiked error: %v\n", err)
+				}
+			} else {
+				success++
+				if success == 1 {
+					newest = parsedAddedAt
+				}
+				oldest = parsedAddedAt
+			}
+		}
+
+		offset += limit
+		time.Sleep(300 * time.Millisecond) // to avoid hitting rate limits
+	}
+
+DONE:
+	if success > 0 {
+		fmt.Printf("💚 saved %d new liked tracks (skipped %d) | range: %s to %s | %s\n",
+			success, skipped,
+			oldest.Format("15:04:05"),
+			newest.Format("15:04:05"),
+			time.Now().Format(time.Kitchen))
+	} else {
+		fmt.Printf("💤 no new liked tracks (skipped %d) | %s\n",
+			skipped,
+			time.Now().Format(time.Kitchen))
+	}
+}
+
+// this logic was on the collecttracks to collect the recentlyLIked tracks
+// userTracks, err := spotify.GetUserSavedTracks(accessTok)
+// 	if err != nil {
+// 		fmt.Printf("theres an error getting users savedTracks: %v\n", err)
+// 		return
+// 	}
+
+// 	fmt.Printf("ITEM@@@@--->item %+v\n", userTracks)
+// 	// Serialize userTracks to JSON before writing to file
+// 	jsonData, err := json.Marshal(userTracks)
+// 	if err != nil {
+// 		fmt.Printf("Error serializing userTracks: %v\n", err)
+// 		return
+// 	}
+// 	os.WriteFile("DEBUG_saved_tracks.json", jsonData, 0644)
+
+// 	for _, item := range userTracks.Items {
+// 		track := item.Track
+
+// 		// Safely get artist info
+// 		artistName := ""
+// 		artistID := ""
+// 		artistHref := ""
+// 		artistURI := ""
+
+// 		if len(track.Artists) > 0 {
+// 			artist := track.Artists[0]
+// 			artistName = artist.Name
+// 			artistID = artist.ID
+// 			artistHref = artist.Href
+// 			artistURI = artist.URI
+// 		}
+
+// 		// Safely get album info
+// 		album := track.Album
+// 		albumCoverURL := ""
+// 		albumReleaseDate := ""
+// 		albumReleaseDatePrecision := ""
+// 		width, height := 0, 0
+// 		if len(album.Images) > 0 {
+// 			image := album.Images[0]
+// 			albumCoverURL = image.URL
+// 			width = image.Width
+// 			height = image.Height
+// 		}
+
+// 		albumReleaseDate = album.ReleaseDate
+// 		albumReleaseDatePrecision = album.ReleaseDatePrecision
+
+// 		parsedAddedAt, err := time.Parse(time.RFC3339, item.AddedAt)
+// 		if err != nil {
+// 			fmt.Printf("Failed to parse added_at: %v\n", err)
+// 			continue
+// 		}
+
+// 		err = models.InsertRecentlyLiked(
+// 			track.ID,
+// 			track.Name,
+// 			strconv.Itoa(track.Popularity), // You might need to convert string popularity to int or vice versa
+// 			album.Name,
+// 			album.AlbumType,
+// 			albumCoverURL,
+// 			albumReleaseDate,
+// 			albumReleaseDatePrecision,
+// 			artistName,
+// 			artistID,
+// 			artistHref,
+// 			artistURI,
+// 			album.TotalTracks,
+// 			width,
+// 			height,
+// 			parsedAddedAt,
+// 		)
+// 		if err != nil {
+// 			fmt.Printf("InsertRecentlyLiked failed: %v\n", err)
+// 		}
+// 	}

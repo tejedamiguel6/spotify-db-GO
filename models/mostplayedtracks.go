@@ -35,8 +35,10 @@ type RecentlyPlayedTrack struct {
 	ArtistName    string `json:"artist_name" binding:"required"`
 	AlbumName     string `json:"album_name" binding:"required"`
 
-	PlayedAt time.Time `json:"played_at"`
-	Source   string    `json:"source"`
+	PlayedAt      time.Time `json:"played_at"`
+	Source        string    `json:"source"`
+	AlbumCoverUrl string    `json:"album_cover_url`
+	Genre         string    `json:"genre"`
 }
 
 func (t Track) SaveToDatabase(pool *pgxpool.Pool) error {
@@ -109,11 +111,24 @@ func GetAllTracksonRepeat(pool *pgxpool.Pool) []Track {
 	fmt.Println("this is the GETALLSAVE TRACKS")
 
 	query := `
-  SELECT *
-  FROM   tracks_on_repeat
-  ORDER  BY COALESCE(last_played, first_played, '1970-01-01') DESC,
-           id ASC;
-`
+	SELECT 
+		id,
+		spotify_song_id,
+		track_name,
+		artist_name,
+		album_name,
+		genre,
+		preview_url,
+		album_cover_url,
+		play_count,
+		first_played,
+		last_played,
+		time_of_day,
+		mood,
+		activity
+	FROM tracks_on_repeat
+	ORDER BY COALESCE(last_played, first_played, '1970-01-01') DESC, id ASC;
+	`
 
 	rows, err := pool.Query(context.Background(), query)
 	if err != nil {
@@ -139,7 +154,6 @@ func GetAllTracksonRepeat(pool *pgxpool.Pool) []Track {
 			&t.PlayCount,
 			&t.FirstPlayed,
 			&t.LastPlayed,
-			&t.MonthYear,
 			&t.TimeOfDay,
 			&t.Mood,
 			&t.Activity,
@@ -223,7 +237,9 @@ func GetAllRecentPlayedHistory(pool *pgxpool.Pool) ([]RecentlyPlayedTrack, error
 			artist_name,
 			album_name,
 			played_at,
-			source
+			source,
+			album_cover_url,
+			genre
 		FROM recently_played
 		ORDER BY played_at DESC
 	`
@@ -250,6 +266,8 @@ func GetAllRecentPlayedHistory(pool *pgxpool.Pool) ([]RecentlyPlayedTrack, error
 			&rpt.AlbumName,
 			&rpt.PlayedAt,
 			&rpt.Source,
+			&rpt.AlbumCoverUrl,
+			&rpt.Genre,
 		)
 		if err != nil {
 			fmt.Println("Error scanning row:", err)
