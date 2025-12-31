@@ -39,7 +39,7 @@ go-spotify-track-db/
 
 ### Prerequisites
 
-- **Go 1.24+** - [Download Go](https://golang.org/dl/)
+- **Go 1.23+** - [Download Go](https://golang.org/dl/)
 - **PostgreSQL** - Local installation or cloud service (Neon, Supabase, etc.)
 - **Spotify Developer Account** - [Create one here](https://developer.spotify.com/)
 
