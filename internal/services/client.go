@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -33,9 +34,11 @@ func RefreshAccessToken(refreshToken string) (accessToken string, newRefreshTok 
 	defer res.Body.Close()
 
 	if res.StatusCode != http.StatusOK {
-		err = errors.New("refresh failed: " + res.Status)
+		bodyBytes, _ := io.ReadAll(res.Body)
+		err = fmt.Errorf("refresh failed: %s - %s", res.Status, string(bodyBytes))
 		return
 	}
+
 	var body struct {
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token,omitempty"`
@@ -45,6 +48,7 @@ func RefreshAccessToken(refreshToken string) (accessToken string, newRefreshTok 
 	}
 
 	accessToken = body.AccessToken
+	// Only set newRefreshTok if Spotify explicitly returns it
 	if body.RefreshToken != "" {
 		newRefreshTok = &body.RefreshToken
 	}
@@ -188,9 +192,7 @@ func GetRecentlyPlayed(accessToken string, limit int) ([]PlayedItem, error) {
 
 // gets the artist by ID
 func GetArtistById(accessToken, artistID string) (*Artist, error) {
-	req, _ := http.NewRequest("GET",
-		"https://api.spotify.com/v1/artists/"+artistID, nil)
-
+	req, _ := http.NewRequest("GET", "https://api.spotify.com/v1/artists/"+artistID, nil)
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
 	res, err := http.DefaultClient.Do(req)
@@ -200,7 +202,8 @@ func GetArtistById(accessToken, artistID string) (*Artist, error) {
 	defer res.Body.Close()
 
 	if res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("spotify failed to get artist %s: %s", artistID, res.Status)
+		body, _ := io.ReadAll(res.Body)
+		return nil, fmt.Errorf("spotify failed to get artist %s: %s - %s", artistID, res.Status, string(body))
 	}
 
 	var artist Artist
@@ -208,8 +211,8 @@ func GetArtistById(accessToken, artistID string) (*Artist, error) {
 		return nil, err
 	}
 
+	// fmt.Printf("DEBUG: Artist Response (%s): %+v\n", artistID, artist)
 	return &artist, nil
-
 }
 
 // gets single track

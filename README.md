@@ -59,7 +59,13 @@ cd go-spotify-track-db
 
 ### 3. Environment Configuration
 
-Create a `.env` file in the project root:
+Copy the example environment file and fill in your credentials:
+
+```bash
+cp .env.example .env
+```
+
+Then edit `.env` with your actual credentials:
 
 ```env
 # Database Configuration
