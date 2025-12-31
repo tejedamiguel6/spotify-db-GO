@@ -9,133 +9,133 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// func (t Track) SaveToDatabase(pool *pgxpool.Pool) error {
 
-func (t Track) SaveToDatabase(pool *pgxpool.Pool) error {
+// 	var existingTrackID string
+// 	checkQuery := `SELECT id FROM tracks_on_repeat WHERE spotify_song_id = $1`
 
-	var existingTrackID string
-	checkQuery := `SELECT id FROM tracks_on_repeat WHERE spotify_song_id = $1`
+// 	err := pool.QueryRow((context.Background()), checkQuery, t.SpotifySongID).Scan(&existingTrackID)
 
-	err := pool.QueryRow((context.Background()), checkQuery, t.SpotifySongID).Scan(&existingTrackID)
+// 	if err == nil {
+// 		fmt.Println("Track already exists in database with ID:", existingTrackID)
+// 		return nil
+// 	}
 
-	if err == nil {
-		fmt.Println("Track already exists in database with ID:", existingTrackID)
-		return nil
-	}
+// 	// If the error is not "no rows found", return the error
+// 	if err.Error() != "no rows in result set" {
+// 		fmt.Printf("Error checking for existing track: %v\n", err)
+// 		return err
+// 	}
 
-	// If the error is not "no rows found", return the error
-	if err.Error() != "no rows in result set" {
-		fmt.Printf("Error checking for existing track: %v\n", err)
-		return err
-	}
+// 	// now insert exactly 13 columns with 13 placeholders
+// 	query := `
+// 	 INSERT INTO tracks_on_repeat (
+// 		 spotify_song_id,
+// 		 track_name,
+// 		 artist_name,
+// 		 album_name,
+// 		 genre,
+// 		 preview_url,
+// 		 album_cover_url,
+// 		 play_count,
+// 		 first_played,
+// 		 last_played,
+// 		 time_of_day,
+// 		 mood,
+// 		 activity
+// 	 ) VALUES (
+// 		 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+// 	 );
+// 	 `
 
-	// now insert exactly 13 columns with 13 placeholders
-	query := `
-	 INSERT INTO tracks_on_repeat (
-		 spotify_song_id,
-		 track_name,
-		 artist_name,
-		 album_name,
-		 genre,
-		 preview_url,
-		 album_cover_url,
-		 play_count,
-		 first_played,
-		 last_played,
-		 time_of_day,
-		 mood,
-		 activity
-	 ) VALUES (
-		 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
-	 );
-	 `
+// 	_, err = pool.Exec(
+// 		context.Background(),
+// 		query,
+// 		t.SpotifySongID,
+// 		t.TrackName,
+// 		t.ArtistName,
+// 		t.AlbumName,
+// 		t.Genre,
+// 		t.PreviewURL,
+// 		t.AlbumCoverURL,
+// 		t.PlayCount,
+// 		t.FirstPlayed,
+// 		t.LastPlayed,
+// 		t.TimeOfDay,
+// 		t.Mood,
+// 		t.Activity,
+// 	)
 
-	_, err = pool.Exec(
-		context.Background(),
-		query,
-		t.SpotifySongID,
-		t.TrackName,
-		t.ArtistName,
-		t.AlbumName,
-		t.Genre,
-		t.PreviewURL,
-		t.AlbumCoverURL,
-		t.PlayCount,
-		t.FirstPlayed,
-		t.LastPlayed,
-		t.TimeOfDay,
-		t.Mood,
-		t.Activity,
-	)
+// 	if err != nil {
+// 		fmt.Printf("Failed to save track to database: %v\n", err)
+// 		return err
+// 	}
 
-	if err != nil {
-		fmt.Printf("Failed to save track to database: %v\n", err)
-		return err
-	}
+// 	fmt.Println("Track saved to database successfully.")
+// 	return nil
+// }
 
-	fmt.Println("Track saved to database successfully.")
-	return nil
-}
+// depricating
+// func GetAllTracksonRepeat(pool *pgxpool.Pool) []Track {
+// 	fmt.Println("this is the GETALLSAVE TRACKS")
 
-func GetAllTracksonRepeat(pool *pgxpool.Pool) []Track {
-	fmt.Println("this is the GETALLSAVE TRACKS")
+// 	query := `
+// 	SELECT
+// 		id,
+// 		spotify_song_id,
+// 		track_name,
+// 		artist_name,
+// 		album_name,
+// 		genre,
+// 		preview_url,
+// 		album_cover_url,
+// 		play_count,
+// 		first_played,
+// 		last_played,
+// 		time_of_day,
+// 		mood,
+// 		activity
+// 	FROM tracks_on_repeat
+// 	ORDER BY COALESCE(last_played, first_played, '1970-01-01') DESC, id ASC;
+// 	`
 
-	query := `
-	SELECT 
-		id,
-		spotify_song_id,
-		track_name,
-		artist_name,
-		album_name,
-		genre,
-		preview_url,
-		album_cover_url,
-		play_count,
-		first_played,
-		last_played,
-		time_of_day,
-		mood,
-		activity
-	FROM tracks_on_repeat
-	ORDER BY COALESCE(last_played, first_played, '1970-01-01') DESC, id ASC;
-	`
+// 	rows, err := pool.Query(context.Background(), query)
+// 	if err != nil {
+// 		fmt.Println("Failed to query tracks:", err)
+// 		return nil
+// 	}
+// 	defer rows.Close()
 
-	rows, err := pool.Query(context.Background(), query)
-	if err != nil {
-		fmt.Println("Failed to query tracks:", err)
-		return nil
-	}
-	defer rows.Close()
+// 	var results []Track
 
-	var results []Track
+// 	for rows.Next() {
+// 		var t Track
 
-	for rows.Next() {
-		var t Track
+// 		err := rows.Scan(
+// 			&t.ID,
+// 			&t.SpotifySongID,
+// 			&t.TrackName,
+// 			&t.ArtistName,
+// 			&t.AlbumName,
+// 			&t.Genre,
+// 			&t.PreviewURL,
+// 			&t.AlbumCoverURL,
+// 			&t.PlayCount,
+// 			&t.FirstPlayed,
+// 			&t.LastPlayed,
+// 			&t.TimeOfDay,
+// 			&t.Mood,
+// 			&t.Activity,
+// 		)
+// 		if err != nil {
+// 			fmt.Println("Error scanning row:", err)
+// 			continue
+// 		}
+// 		results = append(results, t)
+// 	}
 
-		err := rows.Scan(
-			&t.ID,
-			&t.SpotifySongID,
-			&t.TrackName,
-			&t.ArtistName,
-			&t.AlbumName,
-			&t.Genre,
-			&t.PreviewURL,
-			&t.AlbumCoverURL,
-			&t.PlayCount,
-			&t.FirstPlayed,
-			&t.LastPlayed,
-			&t.TimeOfDay,
-			&t.Mood,
-			&t.Activity,
-		)
-		if err != nil {
-			fmt.Println("Error scanning row:", err)
-			continue
-		}
-		results = append(results, t)
-	}
-
-	return results
-}
+// 	return results
+// }
 
 func GetSingleTrack(pool *pgxpool.Pool, spotifyID string) (*Track, error) {
 	// might need to edit this serialization since im using postgres

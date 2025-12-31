@@ -14,9 +14,13 @@ import (
 	"example.com/spotifydb/internal/models"
 	"example.com/spotifydb/internal/repository"
 	"example.com/spotifydb/internal/services"
+	"example.com/spotifydb/internal/utils"
 
 	"github.com/gin-gonic/gin"
 )
+
+// Global rate limiter for cron jobs
+var cronRateLimiter *utils.RateLimiter
 
 /* ---------- collection statistics ---------- */
 func GetCollectionStats(c *gin.Context) {
@@ -86,6 +90,9 @@ func GetCollectionStats(c *gin.Context) {
 
 /* ---------- enhanced background ticker ---------- */
 func StartSpotifyCron() {
+	// Initialize rate limiter for cron jobs
+	cronRateLimiter = utils.NewRateLimiter()
+	fmt.Println("🚀 Starting Spotify cron with rate limiting protection")
 	// Check if we need to do initial historical fetch
 	go func() {
 		time.Sleep(5 * time.Second) // Wait for server to start up
@@ -131,6 +138,7 @@ func StartSpotifyCron() {
 			CollectRecentTracks()
 			CollectSavedTracks()
 			GetCurrentlyPLaying()
+			GetGenreOfRecentlyLiked(150)
 
 		}
 	}()
@@ -162,10 +170,14 @@ func CollectRecentTracks() {
 		latestTime = time.Time{} // Start from beginning if error
 	}
 
-	// Get recent tracks from Spotify
-	items, err := services.GetRecentlyPlayed(accessTok, 50)
+	// Get recent tracks from Spotify with rate limiting
+	var items []services.PlayedItem
+	err = cronRateLimiter.RetryWithBackoff(func() error {
+		items, err = services.GetRecentlyPlayed(accessTok, 50)
+		return err
+	}, 2) // Max 2 retries for cron job
 	if err != nil {
-		fmt.Println("cron: recently-played error:", err)
+		fmt.Println("cron: recently-played error after retries:", err)
 		return
 	}
 
@@ -198,9 +210,18 @@ func CollectRecentTracks() {
 
 		if len(it.Track.Artists) > 0 {
 			artistID := it.Track.Artists[0].ID
-			artistObj, err := services.GetArtistById(accessTok, artistID)
+			var artistObj *services.Artist
+			err := cronRateLimiter.RetryWithBackoff(func() error {
+				artistObj, err = services.GetArtistById(accessTok, artistID)
+				return err
+			}, 1) // Only 1 retry for cron to avoid delays
+			
 			if err != nil {
-				log.Printf("Failed to fetch artist %s: %v", artistID, err)
+				if utils.IsRateLimitError(err) {
+					log.Printf("Cron: Rate limited on artist %s, skipping genre", artistID)
+				} else {
+					log.Printf("Cron: Failed to fetch artist %s: %v", artistID, err)
+				}
 			} else if artistObj != nil {
 				artist = artistObj.Name
 				if len(artistObj.Genres) > 0 {
@@ -260,30 +281,31 @@ func SaveRefresh(c *gin.Context) {
 	c.JSON(200, gin.H{"msg": "saved"})
 }
 
-func GetMostPlayedTracks(context *gin.Context) {
-	tracks := models.GetAllTracksonRepeat(repository.Pool)
-	context.JSON(http.StatusOK, tracks)
-}
+// depricating due to getting rid of that table
+// func GetMostPlayedTracks(context *gin.Context) {
+// 	tracks := models.GetAllTracksonRepeat(repository.Pool)
+// 	context.JSON(http.StatusOK, tracks)
+// }
 
 // saves to database
-func CreateTrack(context *gin.Context) {
-	var track models.Track
+// func CreateTrack(context *gin.Context) {
+// 	var track models.Track
 
-	err := context.ShouldBindJSON(&track)
-	if err != nil {
-		context.JSON(http.StatusBadRequest, gin.H{"message": "could not parse data"})
-		return
-	}
+// 	err := context.ShouldBindJSON(&track)
+// 	if err != nil {
+// 		context.JSON(http.StatusBadRequest, gin.H{"message": "could not parse data"})
+// 		return
+// 	}
 
-	// this saves into database
-	err = track.SaveToDatabase(repository.Pool)
-	if err != nil {
-		context.JSON(http.StatusInternalServerError, gin.H{"message": "could not save to database"})
-		return
-	}
+// 	// this saves into database
+// 	err = track.SaveToDatabase(repository.Pool)
+// 	if err != nil {
+// 		context.JSON(http.StatusInternalServerError, gin.H{"message": "could not save to database"})
+// 		return
+// 	}
 
-	context.JSON(http.StatusCreated, gin.H{"message": "created track", "track": track})
-}
+// 	context.JSON(http.StatusCreated, gin.H{"message": "created track", "track": track})
+// }
 
 // update tracks
 func UpdateTrack(context *gin.Context) {
@@ -367,6 +389,18 @@ func NowListeningToTrack(context *gin.Context) {
 
 }
 
+// function to get all of the recentlyLIked tracks endpoint
+
+func RecentlyLiked(context *gin.Context) {
+	data := models.CollectRecentlyLiked()
+
+	context.JSON(http.StatusOK, gin.H{
+		"data":    data,
+		"count":   len(data),
+		"message": "Successfully retrieved recently liked tracks",
+	})
+}
+
 // function to get all saved tracks
 func CollectSavedTracks() {
 	// Get refresh token
@@ -401,9 +435,18 @@ func CollectSavedTracks() {
 	limit := 50
 
 	for {
-		page, err := services.GetUserSavedTracksPage(accessTok, offset, limit)
+		var page *services.UserSavedTracks
+		err := cronRateLimiter.RetryWithBackoff(func() error {
+			page, err = services.GetUserSavedTracksPage(accessTok, offset, limit)
+			return err
+		}, 2) // Max 2 retries for cron
+		
 		if err != nil {
-			fmt.Printf("❌ Failed to fetch saved tracks: %v\n", err)
+			if utils.IsRateLimitError(err) {
+				fmt.Printf("⚠️  Cron: Rate limited on saved tracks, pausing collection\n")
+			} else {
+				fmt.Printf("❌ Failed to fetch saved tracks after retries: %v\n", err)
+			}
 			break
 		}
 
@@ -521,18 +564,23 @@ func GetGenreOfRecentlyLiked(batchSize int) int {
 		return 0
 	}
 
-	accessTok, _, err := services.RefreshAccessToken(refreshTok)
+	accessTok, newRefresh, err := services.RefreshAccessToken(refreshTok)
 	if err != nil {
 		fmt.Printf("Failed to refresh token: %v\n", err)
 		return 0
 	}
+	if newRefresh != nil && *newRefresh != refreshTok {
+		_ = repository.SaveOrUpdateRefreshToken(*newRefresh)
+	}
 
-	// Fetch only a batch
+	// Fetch only a batch, including rate-limited entries to retry
 	query := `
         SELECT id, artist_id
         FROM recently_liked
-        WHERE genre IS NULL OR genre = ''
-        ORDER BY id
+        WHERE genre IS NULL OR genre = '' OR genre = 'rate-limited'
+        ORDER BY 
+            CASE WHEN genre = 'rate-limited' THEN 1 ELSE 0 END,
+            id
         LIMIT $1;
     `
 	rows, err := repository.Pool.Query(context.Background(), query, batchSize)
@@ -551,29 +599,73 @@ func GetGenreOfRecentlyLiked(batchSize int) int {
 			continue
 		}
 
-		artistObj, err := services.GetArtistById(accessTok, artistID)
+		var artistObj *services.Artist
+		err := cronRateLimiter.RetryWithBackoff(func() error {
+			artistObj, err = services.GetArtistById(accessTok, artistID)
+			return err
+		}, 2) // Max 2 retries for genre fetching
+		
 		if err != nil {
-			if strings.Contains(err.Error(), "429") {
-				fmt.Println("⚠️ Rate limited! Sleeping for 5 seconds...")
-				time.Sleep(5 * time.Second)
-				continue
+			if utils.IsRateLimitError(err) {
+				fmt.Printf("⚠️ Rate limited on genre fetch for artist %s, marking as 'rate-limited'\n", artistID)
+				// Mark as rate-limited instead of unknown to retry later
+				if _, err := repository.Pool.Exec(context.Background(),
+					"UPDATE recently_liked SET genre = $1 WHERE id = $2", "rate-limited", id); err != nil {
+					fmt.Printf("Failed to update genre for ID %d: %v\n", id, err)
+				}
+			} else {
+				// For other errors, mark as unknown and move on
+				if _, err := repository.Pool.Exec(context.Background(),
+					"UPDATE recently_liked SET genre = $1 WHERE id = $2", "unknown", id); err != nil {
+					fmt.Printf("Failed to update genre for ID %d: %v\n", id, err)
+				}
 			}
-			fmt.Printf("Failed to get artist (%s): %v\n", artistID, err)
 			continue
 		}
 
 		genre := ""
 		if artistObj != nil && len(artistObj.Genres) > 0 {
 			genre = strings.Join(artistObj.Genres, ", ")
+		} else {
+			genre = "no genre"
 		}
+		fmt.Printf("DEBUG Artist--->>> %s Genres: %+v\n", artistID, artistObj.Genres)
 
 		if _, err := repository.Pool.Exec(context.Background(),
 			"UPDATE recently_liked SET genre = $1 WHERE id = $2", genre, id); err != nil {
 			fmt.Printf("Failed to update genre for ID %d: %v\n", id, err)
 		} else {
 			updated++
+			fmt.Printf("Updated ID %d (Artist: %s) → Genre: %s\n", id, artistID, genre)
 		}
 	}
 	fmt.Printf("✅ Updated %d tracks in this batch.\n", updated)
 	return updated
+}
+
+func GetUserGenre(c *gin.Context) {
+	genre := c.Param("genre")
+	
+	if genre == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Genre parameter is required"})
+		return
+	}
+
+	// Query recently_liked table for artists with the specified genre
+	likedArtists, err := repository.GetArtistsByGenre("recently_liked", genre)
+	if err != nil {
+		fmt.Printf("Error fetching artists by genre: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to fetch artists by genre",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"genre":        genre,
+		"artists":      likedArtists,
+		"count":        len(likedArtists),
+		"message":      "Successfully retrieved liked artists by genre",
+	})
 }

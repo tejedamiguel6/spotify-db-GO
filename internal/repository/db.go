@@ -15,6 +15,7 @@ var Pool *pgxpool.Pool
 
 // InitDB initializes the connection pool to Neon
 func InitDB() {
+
 	fmt.Println("🔌  Connecting to  database…")
 
 	// Load .env for DATABASE_URL
@@ -30,6 +31,14 @@ func InitDB() {
 	Pool = pool
 
 	// Quick sanity check
+	var currentDB string
+	var currentUser string
+	err = pool.QueryRow(context.Background(), "SELECT current_database(), current_user").Scan(&currentDB, &currentUser)
+	if err != nil {
+		log.Fatalf("Failed to check DB and user: %v", err)
+	}
+	fmt.Printf("🧠 Connected to DB: %s as user: %s\n", currentDB, currentUser)
+
 	var greeting string
 	if err := pool.QueryRow(context.Background(), "SELECT 'Connected to Neon DB!'").Scan(&greeting); err != nil {
 		log.Fatalf("QueryRow failed: %v\n", err)
@@ -37,6 +46,94 @@ func InitDB() {
 	}
 
 	fmt.Println("✅", greeting)
+
+	// Ensure required tables exist
+	if err := ensureTablesExist(); err != nil {
+		log.Fatalf("Failed to create required tables: %v", err)
+	}
+}
+
+// ensureTablesExist creates all required tables if they don't exist
+func ensureTablesExist() error {
+	ctx := context.Background()
+
+	// Create recently_liked table (the one that's missing after crash)
+	recentlyLikedTable := `
+	CREATE TABLE IF NOT EXISTS recently_liked (
+		id SERIAL PRIMARY KEY,
+		spotify_song_id VARCHAR(255) UNIQUE NOT NULL,
+		track_name TEXT NOT NULL,
+		track_popularity VARCHAR(10),
+		album_name TEXT,
+		album_type VARCHAR(50),
+		album_cover_url TEXT,
+		album_release_date VARCHAR(20),
+		album_release_date_precision VARCHAR(10),
+		artist_name TEXT,
+		artist_id VARCHAR(255),
+		artist_href TEXT,
+		artist_uri TEXT,
+		album_total_tracks INTEGER,
+		album_cover_width INTEGER,
+		album_cover_height INTEGER,
+		genre TEXT,
+		added_at TIMESTAMP NOT NULL,
+		created_at TIMESTAMP DEFAULT NOW()
+	);`
+
+	if _, err := Pool.Exec(ctx, recentlyLikedTable); err != nil {
+		return fmt.Errorf("failed to create recently_liked table: %v", err)
+	}
+
+	// Create spotify_auth table if it doesn't exist
+	authTable := `
+	CREATE TABLE IF NOT EXISTS spotify_auth (
+		id INT PRIMARY KEY DEFAULT 1,
+		refresh_token TEXT NOT NULL,
+		created_at TIMESTAMP DEFAULT NOW(),
+		updated_at TIMESTAMP DEFAULT NOW()
+	);`
+
+	if _, err := Pool.Exec(ctx, authTable); err != nil {
+		return fmt.Errorf("failed to create spotify_auth table: %v", err)
+	}
+
+	// Create recently_played table if it doesn't exist
+	recentlyPlayedTable := `
+	CREATE TABLE IF NOT EXISTS recently_played (
+		id SERIAL PRIMARY KEY,
+		spotify_song_id VARCHAR(255) NOT NULL,
+		track_name TEXT NOT NULL,
+		artist_name TEXT,
+		album_name TEXT,
+		album_cover_url TEXT,
+		genre TEXT,
+		played_at TIMESTAMP NOT NULL,
+		source VARCHAR(50) DEFAULT 'cron',
+		created_at TIMESTAMP DEFAULT NOW(),
+		UNIQUE(spotify_song_id, played_at)
+	);`
+
+	if _, err := Pool.Exec(ctx, recentlyPlayedTable); err != nil {
+		return fmt.Errorf("failed to create recently_played table: %v", err)
+	}
+
+	// Create useful indexes
+	indexes := []string{
+		"CREATE INDEX IF NOT EXISTS idx_recently_liked_added_at ON recently_liked(added_at DESC);",
+		"CREATE INDEX IF NOT EXISTS idx_recently_liked_genre ON recently_liked(genre);",
+		"CREATE INDEX IF NOT EXISTS idx_recently_played_played_at ON recently_played(played_at DESC);",
+	}
+
+	for _, indexSQL := range indexes {
+		if _, err := Pool.Exec(ctx, indexSQL); err != nil {
+			// Don't fail on index creation errors, just log them
+			fmt.Printf("⚠️  Warning: Failed to create index: %v\n", err)
+		}
+	}
+
+	fmt.Println("🏗️  Database schema verified/created")
+	return nil
 }
 
 // GetLatestPlayedAt returns the most recent played_at timestamp from recently_played
@@ -118,4 +215,55 @@ func HasHistoricalData() (bool, error) {
 		return false, fmt.Errorf("failed to check historical data: %v", err)
 	}
 	return count > 0, nil
+}
+
+// GetArtistsByGenre returns unique artists from specified table that match the given genre
+func GetArtistsByGenre(tableName, genre string) ([]map[string]any, error) {
+	query := fmt.Sprintf(`
+		SELECT artist_name, artist_id, 
+		       COUNT(*) as track_count,
+		       STRING_AGG(DISTINCT genre, ', ') as genres,
+		       (SELECT album_cover_url FROM %s r2 
+		        WHERE r2.artist_id = r1.artist_id 
+		        AND r2.album_cover_url IS NOT NULL 
+		        ORDER BY r2.added_at DESC LIMIT 1) as artist_image_url
+		FROM %s r1
+		WHERE genre ILIKE $1 
+		GROUP BY artist_name, artist_id
+		ORDER BY track_count DESC, artist_name
+	`, tableName, tableName)
+
+	rows, err := Pool.Query(context.Background(), query, "%"+genre+"%")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get artists by genre: %v", err)
+	}
+	defer rows.Close()
+
+	var artists []map[string]any
+	for rows.Next() {
+		var artistName, artistID, genres string
+		var artistImageURL *string
+		var trackCount int
+
+		err := rows.Scan(&artistName, &artistID, &trackCount, &genres, &artistImageURL)
+		if err != nil {
+			continue
+		}
+
+		imageURL := ""
+		if artistImageURL != nil {
+			imageURL = *artistImageURL
+		}
+
+		artist := map[string]any{
+			"artist_name":      artistName,
+			"artist_id":        artistID,
+			"track_count":      trackCount,
+			"genres":           genres,
+			"artist_image_url": imageURL,
+		}
+		artists = append(artists, artist)
+	}
+
+	return artists, nil
 }

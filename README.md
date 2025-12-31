@@ -39,7 +39,7 @@ go-spotify-track-db/
 
 ### Prerequisites
 
-- **Go 1.24+** - [Download Go](https://golang.org/dl/)
+- **Go 1.23+** - [Download Go](https://golang.org/dl/)
 - **PostgreSQL** - Local installation or cloud service (Neon, Supabase, etc.)
 - **Spotify Developer Account** - [Create one here](https://developer.spotify.com/)
 
@@ -59,7 +59,13 @@ cd go-spotify-track-db
 
 ### 3. Environment Configuration
 
-Create a `.env` file in the project root:
+Copy the example environment file and fill in your credentials:
+
+```bash
+cp .env.example .env
+```
+
+Then edit `.env` with your actual credentials:
 
 ```env
 # Database Configuration

@@ -1,11 +1,8 @@
 package main
 
 import (
-	"time"
-
 	"example.com/spotifydb/internal/handlers"
 	"example.com/spotifydb/internal/repository"
-	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
 
@@ -16,23 +13,32 @@ func main() {
 	router := gin.Default()
 
 	// Add CORS middleware
-	router.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:3000"},
-		AllowMethods:     []string{"GET", "POST", "OPTIONS", "PATCH"},
-		AllowHeaders:     []string{"Origin", "Content-Type"},
-		ExposeHeaders:    []string{"Content-Length"},
-		AllowCredentials: true,
-		MaxAge:           12 * time.Hour,
-	}))
+	router.Use(func(c *gin.Context) {
+		c.Writer.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(204)
+			return
+		}
+
+		c.Next()
+	})
 
 	repository.InitDB()
 
 	/* -------- API routes -------- */
-	router.GET("/mostPlayedTracks", handlers.GetMostPlayedTracks)
+	// depracating
+	// router.GET("/mostPlayedTracks", handlers.GetMostPlayedTracks)
 	router.GET("/recently-played-tracks", handlers.RecentlyPlayedTracks)
 	router.GET("/now-listening-to", handlers.NowListeningToTrack)
+	router.GET("/recently-liked", handlers.RecentlyLiked)
 
-	router.POST("/mostPlayedTracks", handlers.CreateTrack)
+	// need endpiint for genre
+	router.GET("/genre/:genre", handlers.GetUserGenre)
+
+	// router.POST("/mostPlayedTracks", handlers.CreateTrack)
 	router.PATCH("/mostPlayedTracks/track/:spotify_song_id", handlers.UpdateTrack)
 
 	/* NEW: endpoint to store (or rotate) refresh_token */
