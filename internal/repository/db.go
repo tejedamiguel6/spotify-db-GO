@@ -18,9 +18,9 @@ func InitDB() {
 
 	fmt.Println("🔌  Connecting to  database…")
 
-	// Load .env for DATABASE_URL
+	// Load .env for DATABASE_URL (optional - may not exist in production)
 	if err := godotenv.Load(); err != nil {
-		log.Fatal("Error loading .env:", err)
+		log.Println("Note: .env file not found (this is normal in production environments)")
 	}
 
 	dsn := os.Getenv("DATABASE_URL")
