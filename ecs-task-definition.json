@@ -9,7 +9,7 @@
   "containerDefinitions": [
     {
       "name": "spotify-track-db",
-      "image": "YOUR_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/spotify-track-db:latest",
+      "image": "YOUR_ACCOUNT_ID.dkr.ecr.us-east-2.amazonaws.com/spotify-track-db:latest",
       "essential": true,
       "portMappings": [
         {
@@ -21,22 +21,22 @@
       "secrets": [
         {
           "name": "DATABASE_URL",
-          "valueFrom": "arn:aws:secretsmanager:us-east-1:YOUR_ACCOUNT_ID:secret:spotify-track-db/DATABASE_URL"
+          "valueFrom": "arn:aws:secretsmanager:us-east-2:YOUR_ACCOUNT_ID:secret:spotify-track-db/DATABASE_URL"
         },
         {
           "name": "SPOTIFY_CLIENT_ID",
-          "valueFrom": "arn:aws:secretsmanager:us-east-1:YOUR_ACCOUNT_ID:secret:spotify-track-db/SPOTIFY_CLIENT_ID"
+          "valueFrom": "arn:aws:secretsmanager:us-east-2:YOUR_ACCOUNT_ID:secret:spotify-track-db/SPOTIFY_CLIENT_ID"
         },
         {
           "name": "SPOTIFY_CLIENT_SECRET",
-          "valueFrom": "arn:aws:secretsmanager:us-east-1:YOUR_ACCOUNT_ID:secret:spotify-track-db/SPOTIFY_CLIENT_SECRET"
+          "valueFrom": "arn:aws:secretsmanager:us-east-2:YOUR_ACCOUNT_ID:secret:spotify-track-db/SPOTIFY_CLIENT_SECRET"
         }
       ],
       "logConfiguration": {
         "logDriver": "awslogs",
         "options": {
           "awslogs-group": "/ecs/spotify-track-db",
-          "awslogs-region": "us-east-1",
+          "awslogs-region": "us-east-2",
           "awslogs-stream-prefix": "ecs"
         }
       }
