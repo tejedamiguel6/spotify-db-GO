@@ -16,20 +16,20 @@ type RecentlyLikedTracks struct {
 	ID                        int       `json:"id"`
 	SpotifyID                 string    `json:"spotify_song_id"`
 	TrackName                 string    `json:"track_name"`
-	TrackPopularity           string    `json:"track_popularity"`
-	AlbumName                 string    `json:"album_name"`
-	AlbumType                 string    `json:"album_type"`
-	AlbumCoverURL             string    `json:"album_cover_url"`
-	AlbumReleaseDate          string    `json:"album_release_date"`
-	AlbumReleaseDatePrecision string    `json:"album_release_date_precision"`
-	ArtistName                string    `json:"artist_name"`
-	ArtistID                  string    `json:"artist_id"`
-	ArtistHref                string    `json:"artist_href"`
-	ArtistURI                 string    `json:"artist_uri"`
-	AlbumTotalTracks          int       `json:"album_total_tracks"`
-	AlbumCoverWidth           int       `json:"album_cover_width"`
-	AlbumCoverHeight          int       `json:"album_cover_height"`
-	Genre                     string    `json:"genre"`
+	TrackPopularity           *int      `json:"track_popularity"`
+	AlbumName                 *string   `json:"album_name"`
+	AlbumType                 *string   `json:"album_type"`
+	AlbumCoverURL             *string   `json:"album_cover_url"`
+	AlbumReleaseDate          *string   `json:"album_release_date"`
+	AlbumReleaseDatePrecision *string   `json:"album_release_date_precision"`
+	ArtistName                *string   `json:"artist_name"`
+	ArtistID                  *string   `json:"artist_id"`
+	ArtistHref                *string   `json:"artist_href"`
+	ArtistURI                 *string   `json:"artist_uri"`
+	AlbumTotalTracks          *int      `json:"album_total_tracks"`
+	AlbumCoverWidth           *int      `json:"album_cover_width"`
+	AlbumCoverHeight          *int      `json:"album_cover_height"`
+	Genre                     *string   `json:"genre"`
 	AddedAt                   time.Time `json:"added_at"`
 }
 
@@ -186,12 +186,11 @@ func CollectRecentlyLiked() []RecentlyLikedTracks {
 	// Use a simple query without complex formatting to avoid prepared statement conflicts
 	query := `
 		SELECT id, spotify_song_id, track_name, track_popularity,
-			album_name,
-			album_type, album_cover_url,
+			album_name, album_type, album_cover_url,
 			album_release_date, album_release_date_precision,
 			artist_name, artist_id, artist_href, artist_uri,
-			album_total_tracks, album_cover_width,
-			album_cover_height, genre, added_at
+			album_total_tracks, album_cover_width, album_cover_height,
+			genre, added_at
 		FROM recently_liked
 		ORDER BY added_at DESC
 	`
