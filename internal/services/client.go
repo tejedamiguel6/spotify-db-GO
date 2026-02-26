@@ -165,7 +165,9 @@ type CurrentlyPlaying struct {
 }
 
 type TrackObject struct {
-	Album Album `json:"album"`
+	Album      Album  `json:"album"`
+	Name       string `json:"name"`
+	Popularity int    `json:"popularity"`
 }
 
 func GetRecentlyPlayed(accessToken string, limit int) ([]PlayedItem, error) {

@@ -2,6 +2,24 @@
 .env
 .env.local
 .env.*.local
+.env.api-key
+add-api-key-secret.sh
 
 # Allow .env.example to be committed
 !.env.example
+
+# Local documentation (keep private)
+API_KEYS_README.md
+DATABASE_OPTIMIZATION.md
+FRONTEND_INTEGRATION.md
+PORTFOLIO_SETUP.md
+SECURITY_UPDATE_GUIDE.md
+
+# Backup files
+*.backup
+
+# Debug files
+DEBUG_*.json
+
+# Compiled binaries (root level only)
+/server
