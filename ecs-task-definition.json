@@ -30,6 +30,10 @@
         {
           "name": "SPOTIFY_CLIENT_SECRET",
           "valueFrom": "arn:aws:secretsmanager:us-east-2:YOUR_ACCOUNT_ID:secret:spotify-track-db/SPOTIFY_CLIENT_SECRET"
+        },
+        {
+          "name": "API_KEY",
+          "valueFrom": "arn:aws:secretsmanager:us-east-2:YOUR_ACCOUNT_ID:secret:spotify-track-db/API_KEY"
         }
       ],
       "logConfiguration": {

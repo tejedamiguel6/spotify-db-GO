@@ -129,16 +129,21 @@ func StartSpotifyCron() {
 
 			// More frequent during typical listening hours (6 AM - 11 PM)
 			if hour >= 6 && hour <= 23 {
-				interval = 90 * time.Second // Every 1.5 minutes during active hours
+				interval = 5 * time.Minute // Every 5 minutes during active hours (reduced to save data transfer)
 			} else {
-				interval = 5 * time.Minute // Every 5 minutes during sleep hours
+				interval = 15 * time.Minute // Every 15 minutes during sleep hours
 			}
 
 			time.Sleep(interval)
 			CollectRecentTracks()
 			CollectSavedTracks()
 			GetCurrentlyPLaying()
-			GetGenreOfRecentlyLiked(150)
+
+			// Only update genres every 6th run (every 30 minutes instead of every 5 minutes)
+			// This significantly reduces database queries
+			if time.Now().Minute()%30 == 0 {
+				GetGenreOfRecentlyLiked(50) // Reduced from 150 to 50 tracks per run
+			}
 
 		}
 	}()
