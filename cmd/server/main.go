@@ -108,6 +108,12 @@ func main() {
 	/* NEW: endpoint to store (or rotate) refresh_token */
 	router.POST("/save-refresh", handlers.SaveRefresh)
 
+	/* Track detail endpoints */
+	router.GET("/tracks/:id/streak", handlers.GetTrackStreak)
+	router.GET("/tracks/:id/stats", handlers.GetTrackStats)
+	router.GET("/tracks/:id/daily", handlers.GetTrackDaily)
+	router.GET("/top-tracks", handlers.GetTopTracks)
+
 	/* Analytics endpoints */
 	router.GET("/collection-stats", handlers.GetCollectionStats)
 	router.GET("/listening-stats", handlers.GetListeningStats)
