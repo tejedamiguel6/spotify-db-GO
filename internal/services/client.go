@@ -59,9 +59,10 @@ func RefreshAccessToken(refreshToken string) (accessToken string, newRefreshTok 
 
 type PlayedItem struct {
 	Track struct {
-		ID    string `json:"id"`
-		Name  string `json:"name"`
-		Album struct {
+		ID         string `json:"id"`
+		Name       string `json:"name"`
+		DurationMs int    `json:"duration_ms"`
+		Album      struct {
 			Name   string       `json:"name"`
 			Images []AlbumImage `json:"images"`
 		} `json:"album"`
@@ -101,9 +102,10 @@ type Artist struct {
 }
 
 type TrackDetails struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Artists []struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	DurationMs int    `json:"duration_ms"`
+	Artists    []struct {
 		ID   string `json:"id"`
 		Name string `json:"name"`
 	} `json:"artists"`

@@ -128,6 +128,7 @@ func recoverRecentlyPlayedSafe(accessToken string, rateLimiter *utils.RateLimite
 			item.Track.Album.Name,
 			albumCoverURL,
 			genre,
+			item.Track.DurationMs,
 			item.PlayedAt,
 		)
 		if err != nil {

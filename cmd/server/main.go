@@ -110,6 +110,8 @@ func main() {
 
 	/* Analytics endpoints */
 	router.GET("/collection-stats", handlers.GetCollectionStats)
+	router.GET("/listening-stats", handlers.GetListeningStats)
+	router.POST("/backfill-duration", handlers.BackfillDurationHandler)
 
 	/* NEW: start the background cron in its own goroutine */
 	go handlers.StartSpotifyCron()

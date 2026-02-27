@@ -9,6 +9,7 @@ import (
 
 	"example.com/spotifydb/internal/repository"
 	"example.com/spotifydb/internal/services"
+	"example.com/spotifydb/internal/utils"
 )
 
 // RecentlyLikedTracks represents a track from the recently_liked table
@@ -36,16 +37,16 @@ type RecentlyLikedTracks struct {
 // Cron writes one row per item; no touch on tracks_on_repeat
 func InsertRecentlyPlayed(
 	spotifyID, name, artist, album string, albumCoverURL string, genre string,
-	playedAt time.Time,
+	durationMs int, playedAt time.Time,
 ) error {
 
 	_, err := repository.Pool.Exec(context.Background(), `
 		INSERT INTO recently_played
 		      (spotify_song_id, track_name, artist_name, album_name, album_cover_url, genre,
-		       played_at, source)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		       duration_ms, played_at, source)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		ON CONFLICT DO NOTHING`,
-		spotifyID, name, artist, album, albumCoverURL, genre, playedAt, "cron")
+		spotifyID, name, artist, album, albumCoverURL, genre, durationMs, playedAt, "cron")
 	return err
 }
 
@@ -162,6 +163,84 @@ func BackfillMissingTrackData(accessToken string) error {
 
 }
 
+// BackfillDuration fetches duration_ms from Spotify for tracks missing it
+func BackfillDuration(accessToken string, rateLimiter *utils.RateLimiter) (int, error) {
+	// First collect all track IDs so we know the total
+	rows, err := repository.Pool.Query(context.Background(), `
+		SELECT DISTINCT spotify_song_id
+		FROM recently_played
+		WHERE duration_ms IS NULL OR duration_ms = 0
+	`)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var trackIDs []string
+	for rows.Next() {
+		var trackID string
+		if err := rows.Scan(&trackID); err != nil {
+			continue
+		}
+		trackIDs = append(trackIDs, trackID)
+	}
+	rows.Close()
+
+	total := len(trackIDs)
+	if total == 0 {
+		log.Println("BackfillDuration: no tracks need backfilling")
+		return 0, nil
+	}
+	log.Printf("BackfillDuration: starting backfill for %d unique tracks", total)
+
+	updated := 0
+	failed := 0
+	for i, trackID := range trackIDs {
+		// Rate limit protection
+		rateLimiter.Wait()
+
+		track, err := services.GetTrack(accessToken, trackID)
+		if err != nil {
+			if utils.IsRateLimitError(err) {
+				// Wait and retry once on rate limit
+				waitTime := rateLimiter.HandleRateLimit("", 0)
+				time.Sleep(waitTime)
+				rateLimiter.Wait()
+				track, err = services.GetTrack(accessToken, trackID)
+			}
+			if err != nil {
+				log.Printf("BackfillDuration: error fetching track %s: %v", trackID, err)
+				failed++
+				continue
+			}
+		}
+
+		if track.DurationMs == 0 {
+			continue
+		}
+
+		_, err = repository.Pool.Exec(context.Background(), `
+			UPDATE recently_played
+			SET duration_ms = $1
+			WHERE spotify_song_id = $2
+		`, track.DurationMs, trackID)
+		if err != nil {
+			log.Printf("BackfillDuration: failed to update %s: %v", trackID, err)
+			failed++
+			continue
+		}
+		updated++
+
+		// Progress log every 50 tracks
+		if (i+1)%50 == 0 || i+1 == total {
+			log.Printf("BackfillDuration: progress %d/%d (updated: %d, failed: %d)", i+1, total, updated, failed)
+		}
+	}
+
+	log.Printf("BackfillDuration: complete — updated: %d, failed: %d, total: %d", updated, failed, total)
+	return updated, nil
+}
+
 // CollectRecentlyLiked gets all recently liked tracks from the database
 func CollectRecentlyLiked() []RecentlyLikedTracks {
 	fmt.Println("🔍 CollectRecentlyLiked called")
@@ -223,7 +302,7 @@ func CollectRecentlyLiked() []RecentlyLikedTracks {
 
 		// Log first track for debugging
 		if rowCount == 1 {
-			fmt.Printf("📀 First track: %s by %s (Genre: %s)\n", track.TrackName, track.ArtistName, track.Genre)
+			fmt.Printf("📀 First track: %s by %v (Genre: %v)\n", track.TrackName, track.ArtistName, track.Genre)
 		}
 	}
 

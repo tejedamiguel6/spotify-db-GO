@@ -248,6 +248,7 @@ func CollectRecentTracks() {
 			it.Track.Album.Name,
 			albumCoverURL,
 			genre,
+			it.Track.DurationMs,
 			it.PlayedAt,
 		)
 		if err != nil {
@@ -646,6 +647,127 @@ func GetGenreOfRecentlyLiked(batchSize int) int {
 	}
 	fmt.Printf("✅ Updated %d tracks in this batch.\n", updated)
 	return updated
+}
+
+/* ---------- listening time stats ---------- */
+
+func formatDuration(ms int64) string {
+	hours := ms / 3600000
+	minutes := (ms % 3600000) / 60000
+	return fmt.Sprintf("%dh %dm", hours, minutes)
+}
+
+func GetListeningStats(c *gin.Context) {
+	now := time.Now()
+
+	// Check if a specific song was requested
+	songID := c.Query("song_id")
+	if songID != "" {
+		sinceStr := c.DefaultQuery("since", "all")
+		var since time.Time
+		switch sinceStr {
+		case "24h":
+			since = now.AddDate(0, 0, -1)
+		case "week":
+			since = now.AddDate(0, 0, -7)
+		case "month":
+			since = now.AddDate(0, -1, 0)
+		default:
+			since = time.Time{}
+		}
+
+		totalMs, playCount, err := repository.GetListeningTimePerSong(songID, since)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"song_id":    songID,
+			"play_count": playCount,
+			"total_ms":   totalMs,
+			"formatted":  formatDuration(totalMs),
+		})
+		return
+	}
+
+	// Overall listening time by period
+	periods := map[string]time.Time{
+		"last_24_hours": now.AddDate(0, 0, -1),
+		"last_week":     now.AddDate(0, 0, -7),
+		"last_month":    now.AddDate(0, -1, 0),
+		"last_3_months": now.AddDate(0, -3, 0),
+		"all_time":      {},
+	}
+
+	listeningTime := make(map[string]gin.H)
+	for period, since := range periods {
+		totalMs, err := repository.GetListeningTimeSince(since)
+		if err != nil {
+			fmt.Printf("Error getting listening time for %s: %v\n", period, err)
+			totalMs = 0
+		}
+		listeningTime[period] = gin.H{
+			"total_ms":  totalMs,
+			"formatted": formatDuration(totalMs),
+		}
+	}
+
+	dailyBreakdown, err := repository.GetListeningTimeByDateRange()
+	if err != nil {
+		fmt.Printf("Error getting daily listening breakdown: %v\n", err)
+	}
+
+	// Format daily breakdown with human-readable durations
+	type dailyEntry struct {
+		Date      string `json:"date"`
+		TotalMs   int64  `json:"total_ms"`
+		Formatted string `json:"formatted"`
+		Count     int    `json:"count"`
+	}
+	var formattedDaily []dailyEntry
+	for _, d := range dailyBreakdown {
+		formattedDaily = append(formattedDaily, dailyEntry{
+			Date:      d.Date,
+			TotalMs:   d.TotalMs,
+			Formatted: formatDuration(d.TotalMs),
+			Count:     d.Count,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"listening_time":              listeningTime,
+		"daily_breakdown_last_30_days": formattedDaily,
+	})
+}
+
+/* ---------- backfill duration ---------- */
+
+func BackfillDurationHandler(c *gin.Context) {
+	refreshTok, err := repository.GetRefreshToken()
+	if err != nil || refreshTok == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "no refresh token available"})
+		return
+	}
+
+	accessTok, newRefresh, err := services.RefreshAccessToken(refreshTok)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to refresh token: " + err.Error()})
+		return
+	}
+	if newRefresh != nil && *newRefresh != refreshTok {
+		_ = repository.SaveOrUpdateRefreshToken(*newRefresh)
+	}
+
+	updated, err := models.BackfillDuration(accessTok, utils.NewRateLimiter())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": fmt.Sprintf("Backfilled duration for %d unique tracks", updated),
+		"updated": updated,
+	})
 }
 
 func GetUserGenre(c *gin.Context) {

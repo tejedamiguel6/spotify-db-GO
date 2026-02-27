@@ -108,6 +108,7 @@ func ensureTablesExist() error {
 		album_name TEXT,
 		album_cover_url TEXT,
 		genre TEXT,
+		duration_ms INTEGER DEFAULT 0,
 		played_at TIMESTAMP NOT NULL,
 		source VARCHAR(50) DEFAULT 'cron',
 		created_at TIMESTAMP DEFAULT NOW(),
@@ -116,6 +117,11 @@ func ensureTablesExist() error {
 
 	if _, err := Pool.Exec(ctx, recentlyPlayedTable); err != nil {
 		return fmt.Errorf("failed to create recently_played table: %v", err)
+	}
+
+	// Migration: add duration_ms column to existing tables
+	if _, err := Pool.Exec(ctx, `ALTER TABLE recently_played ADD COLUMN IF NOT EXISTS duration_ms INTEGER DEFAULT 0`); err != nil {
+		fmt.Printf("⚠️  Warning: Failed to add duration_ms column: %v\n", err)
 	}
 
 	// Create useful indexes
@@ -215,6 +221,70 @@ func HasHistoricalData() (bool, error) {
 		return false, fmt.Errorf("failed to check historical data: %v", err)
 	}
 	return count > 0, nil
+}
+
+// GetListeningTimeSince returns total duration_ms of tracks played since a given time
+func GetListeningTimeSince(since time.Time) (int64, error) {
+	var totalMs int64
+	query := `SELECT COALESCE(SUM(duration_ms), 0) FROM recently_played WHERE played_at >= $1`
+	err := Pool.QueryRow(context.Background(), query, since).Scan(&totalMs)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get listening time since %v: %v", since, err)
+	}
+	return totalMs, nil
+}
+
+// GetListeningTimeByDateRange returns daily listening time for the last 30 days
+func GetListeningTimeByDateRange() ([]struct {
+	Date    string `json:"date"`
+	TotalMs int64  `json:"total_ms"`
+	Count   int    `json:"count"`
+}, error) {
+	query := `
+		SELECT
+			TO_CHAR(DATE(played_at), 'YYYY-MM-DD') as date,
+			COALESCE(SUM(duration_ms), 0) as total_ms,
+			COUNT(*) as count
+		FROM recently_played
+		WHERE played_at >= NOW() - INTERVAL '30 days'
+		GROUP BY DATE(played_at)
+		ORDER BY date DESC
+	`
+	rows, err := Pool.Query(context.Background(), query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get listening time by date range: %v", err)
+	}
+	defer rows.Close()
+
+	var results []struct {
+		Date    string `json:"date"`
+		TotalMs int64  `json:"total_ms"`
+		Count   int    `json:"count"`
+	}
+	for rows.Next() {
+		var result struct {
+			Date    string `json:"date"`
+			TotalMs int64  `json:"total_ms"`
+			Count   int    `json:"count"`
+		}
+		if err := rows.Scan(&result.Date, &result.TotalMs, &result.Count); err != nil {
+			return nil, err
+		}
+		results = append(results, result)
+	}
+	return results, nil
+}
+
+// GetListeningTimePerSong returns total duration and play count for a specific song
+func GetListeningTimePerSong(spotifyID string, since time.Time) (int64, int, error) {
+	var totalMs int64
+	var count int
+	query := `SELECT COALESCE(SUM(duration_ms), 0), COUNT(*) FROM recently_played WHERE spotify_song_id = $1 AND played_at >= $2`
+	err := Pool.QueryRow(context.Background(), query, spotifyID, since).Scan(&totalMs, &count)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to get listening time for song %s: %v", spotifyID, err)
+	}
+	return totalMs, count, nil
 }
 
 // GetArtistsByGenre returns unique artists from specified table that match the given genre
