@@ -25,6 +25,7 @@ type RecentlyPlayedTrack struct {
 	ID            int       `json:"id"`
 	SpotifySongID string    `json:"spotify_song_id" binding:"required"`
 	TrackName     string    `json:"track_name" binding:"required"`
+	DurationMS    int       `json:"duration_ms"`
 	ArtistName    string    `json:"artist_name" binding:"required"`
 	AlbumName     string    `json:"album_name" binding:"required"`
 	PlayedAt      time.Time `json:"played_at"`

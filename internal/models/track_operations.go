@@ -199,7 +199,7 @@ func (t Track) UpdateTrackDB(pool *pgxpool.Pool) error {
 // function that gets most recent plays from db
 func GetAllRecentPlayedHistory(pool *pgxpool.Pool) ([]RecentlyPlayedTrack, error) {
 	query := `
-		SELECT 
+		SELECT
 			id,
 			spotify_song_id,
 			track_name,
@@ -208,12 +208,11 @@ func GetAllRecentPlayedHistory(pool *pgxpool.Pool) ([]RecentlyPlayedTrack, error
 			played_at,
 			source,
   			COALESCE(album_cover_url, '') AS album_cover_url,
-			genre
+			genre,
+			COALESCE(duration_ms, 0) AS duration_ms
 		FROM recently_played
 		ORDER BY played_at DESC
 	`
-
-	fmt.Println("query--->", query)
 
 	rows, err := pool.Query(context.Background(), query)
 	if err != nil {
@@ -237,6 +236,7 @@ func GetAllRecentPlayedHistory(pool *pgxpool.Pool) ([]RecentlyPlayedTrack, error
 			&rpt.Source,
 			&rpt.AlbumCoverUrl,
 			&rpt.Genre,
+			&rpt.DurationMS,
 		)
 		if err != nil {
 			fmt.Println("Error scanning row:", err)
