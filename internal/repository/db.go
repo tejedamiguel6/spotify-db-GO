@@ -287,6 +287,206 @@ func GetListeningTimePerSong(spotifyID string, since time.Time) (int64, int, err
 	return totalMs, count, nil
 }
 
+// TrackStreak holds streak info for a track
+type TrackStreak struct {
+	LongestStreak int     `json:"days"`
+	LongestStart  *string `json:"start"`
+	LongestEnd    *string `json:"end"`
+}
+
+// GetTrackStreak returns the longest and current consecutive-day listening streaks for a track
+func GetTrackStreak(spotifyID string) (longest TrackStreak, current *TrackStreak, err error) {
+	query := `
+	WITH play_dates AS (
+		SELECT DISTINCT DATE(played_at) AS d
+		FROM recently_played
+		WHERE spotify_song_id = $1
+	),
+	grouped AS (
+		SELECT d,
+		       d - (ROW_NUMBER() OVER (ORDER BY d))::int AS grp
+		FROM play_dates
+	),
+	streaks AS (
+		SELECT MIN(d) AS streak_start,
+		       MAX(d) AS streak_end,
+		       COUNT(*) AS streak_len
+		FROM grouped
+		GROUP BY grp
+	)
+	SELECT streak_start, streak_end, streak_len
+	FROM streaks
+	ORDER BY streak_len DESC, streak_end DESC
+	`
+
+	rows, err := Pool.Query(context.Background(), query, spotifyID)
+	if err != nil {
+		return longest, nil, fmt.Errorf("failed to get track streak: %v", err)
+	}
+	defer rows.Close()
+
+	first := true
+	for rows.Next() {
+		var start, end time.Time
+		var length int
+		if err := rows.Scan(&start, &end, &length); err != nil {
+			continue
+		}
+
+		startStr := start.Format("2006-01-02")
+		endStr := end.Format("2006-01-02")
+
+		if first {
+			longest = TrackStreak{
+				LongestStreak: length,
+				LongestStart:  &startStr,
+				LongestEnd:    &endStr,
+			}
+			first = false
+		}
+
+		// Check if this streak is current (ends today or yesterday)
+		today := time.Now().Truncate(24 * time.Hour)
+		yesterday := today.AddDate(0, 0, -1)
+		endDate := end.Truncate(24 * time.Hour)
+
+		if current == nil && (endDate.Equal(today) || endDate.Equal(yesterday)) {
+			current = &TrackStreak{
+				LongestStreak: length,
+				LongestStart:  &startStr,
+				LongestEnd:    &endStr,
+			}
+		}
+	}
+
+	return longest, current, nil
+}
+
+// GetTrackInfo returns track name and artist for a spotify song ID from recently_played
+func GetTrackInfo(spotifyID string) (trackName, artistName string, err error) {
+	query := `SELECT track_name, COALESCE(artist_name, '') FROM recently_played WHERE spotify_song_id = $1 LIMIT 1`
+	err = Pool.QueryRow(context.Background(), query, spotifyID).Scan(&trackName, &artistName)
+	if err != nil {
+		return "", "", fmt.Errorf("track not found: %v", err)
+	}
+	return trackName, artistName, nil
+}
+
+// TrackStats holds aggregate stats for a single track
+type TrackStats struct {
+	PlayCount   int       `json:"play_count"`
+	TotalMs     int64     `json:"total_ms"`
+	FirstListen time.Time `json:"first_listen"`
+	LastListen  time.Time `json:"last_listen"`
+}
+
+// GetTrackStats returns aggregate play stats for a track within an optional date range
+func GetTrackStats(spotifyID string, from, to *time.Time) (TrackStats, error) {
+	var stats TrackStats
+	var firstListen, lastListen *time.Time
+	query := `
+		SELECT COUNT(*) as play_count,
+		       COALESCE(SUM(duration_ms), 0) as total_ms,
+		       MIN(played_at) as first_listen,
+		       MAX(played_at) as last_listen
+		FROM recently_played
+		WHERE spotify_song_id = $1
+		  AND ($2::timestamp IS NULL OR played_at >= $2)
+		  AND ($3::timestamp IS NULL OR played_at <= $3)`
+	err := Pool.QueryRow(context.Background(), query, spotifyID, from, to).
+		Scan(&stats.PlayCount, &stats.TotalMs, &firstListen, &lastListen)
+	if err != nil {
+		return stats, fmt.Errorf("failed to get track stats: %v", err)
+	}
+	if firstListen != nil {
+		stats.FirstListen = *firstListen
+	}
+	if lastListen != nil {
+		stats.LastListen = *lastListen
+	}
+	return stats, nil
+}
+
+// DailyPlay holds a single day's play data for a track
+type DailyPlay struct {
+	Date      string `json:"date"`
+	PlayCount int    `json:"play_count"`
+	TotalMs   int64  `json:"total_ms"`
+}
+
+// GetTrackDaily returns per-day play counts and duration for a track
+func GetTrackDaily(spotifyID string, from, to *time.Time) ([]DailyPlay, error) {
+	query := `
+		SELECT TO_CHAR(DATE(played_at), 'YYYY-MM-DD') as date,
+		       COUNT(*) as play_count,
+		       COALESCE(SUM(duration_ms), 0) as total_ms
+		FROM recently_played
+		WHERE spotify_song_id = $1
+		  AND ($2::timestamp IS NULL OR played_at >= $2)
+		  AND ($3::timestamp IS NULL OR played_at <= $3)
+		GROUP BY DATE(played_at)
+		ORDER BY date`
+	rows, err := Pool.Query(context.Background(), query, spotifyID, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get track daily: %v", err)
+	}
+	defer rows.Close()
+
+	var days []DailyPlay
+	for rows.Next() {
+		var d DailyPlay
+		if err := rows.Scan(&d.Date, &d.PlayCount, &d.TotalMs); err != nil {
+			return nil, err
+		}
+		days = append(days, d)
+	}
+	return days, nil
+}
+
+// TopTrack holds a ranked track from the top-tracks query
+type TopTrack struct {
+	SpotifyID    string `json:"song_id"`
+	TrackName    string `json:"track_name"`
+	ArtistName   string `json:"artist_name"`
+	AlbumName    string `json:"album_name"`
+	AlbumCoverURL string `json:"album_cover_url"`
+	PlayCount    int    `json:"play_count"`
+	TotalMs      int64  `json:"total_ms"`
+}
+
+// GetTopTracks returns the most-played tracks within an optional date range
+func GetTopTracks(from, to *time.Time, limit int) ([]TopTrack, error) {
+	query := `
+		SELECT spotify_song_id,
+		       MAX(track_name) as track_name,
+		       MAX(artist_name) as artist_name,
+		       MAX(album_name) as album_name,
+		       MAX(album_cover_url) as album_cover_url,
+		       COUNT(*) as play_count,
+		       COALESCE(SUM(duration_ms), 0) as total_ms
+		FROM recently_played
+		WHERE ($1::timestamp IS NULL OR played_at >= $1)
+		  AND ($2::timestamp IS NULL OR played_at <= $2)
+		GROUP BY spotify_song_id
+		ORDER BY play_count DESC
+		LIMIT $3`
+	rows, err := Pool.Query(context.Background(), query, from, to, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get top tracks: %v", err)
+	}
+	defer rows.Close()
+
+	var tracks []TopTrack
+	for rows.Next() {
+		var t TopTrack
+		if err := rows.Scan(&t.SpotifyID, &t.TrackName, &t.ArtistName, &t.AlbumName, &t.AlbumCoverURL, &t.PlayCount, &t.TotalMs); err != nil {
+			return nil, err
+		}
+		tracks = append(tracks, t)
+	}
+	return tracks, nil
+}
+
 // GetArtistsByGenre returns unique artists from specified table that match the given genre
 func GetArtistsByGenre(tableName, genre string) ([]map[string]any, error) {
 	query := fmt.Sprintf(`

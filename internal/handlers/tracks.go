@@ -770,6 +770,222 @@ func BackfillDurationHandler(c *gin.Context) {
 	})
 }
 
+/* ---------- track streak ---------- */
+
+func GetTrackStreak(c *gin.Context) {
+	spotifyID := c.Param("id")
+	if spotifyID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "track ID is required"})
+		return
+	}
+
+	trackName, artistName, err := repository.GetTrackInfo(spotifyID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "track not found in listening history"})
+		return
+	}
+
+	longest, current, err := repository.GetTrackStreak(spotifyID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if longest.LongestStreak == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"song_id":        spotifyID,
+			"track_name":     trackName,
+			"artist_name":    artistName,
+			"longest_streak": nil,
+			"current_streak": nil,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"song_id":     spotifyID,
+		"track_name":  trackName,
+		"artist_name": artistName,
+		"longest_streak": gin.H{
+			"days":  longest.LongestStreak,
+			"start": longest.LongestStart,
+			"end":   longest.LongestEnd,
+		},
+		"current_streak": current,
+	})
+}
+
+/* ---------- shared date-range parser ---------- */
+
+func parseDateRange(c *gin.Context) (*time.Time, *time.Time, error) {
+	var from, to *time.Time
+	if v := c.Query("from"); v != "" {
+		t, err := time.Parse("2006-01-02", v)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid 'from' date: %v", err)
+		}
+		from = &t
+	}
+	if v := c.Query("to"); v != "" {
+		t, err := time.Parse("2006-01-02", v)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid 'to' date: %v", err)
+		}
+		// Set to end of day so the entire "to" date is included
+		endOfDay := t.Add(24*time.Hour - time.Nanosecond)
+		to = &endOfDay
+	}
+	return from, to, nil
+}
+
+/* ---------- track stats ---------- */
+
+func GetTrackStats(c *gin.Context) {
+	spotifyID := c.Param("id")
+	if spotifyID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "track ID is required"})
+		return
+	}
+
+	from, to, err := parseDateRange(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	trackName, artistName, err := repository.GetTrackInfo(spotifyID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "track not found in listening history"})
+		return
+	}
+
+	stats, err := repository.GetTrackStats(spotifyID, from, to)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"song_id":      spotifyID,
+		"track_name":   trackName,
+		"artist_name":  artistName,
+		"play_count":   stats.PlayCount,
+		"total_ms":     stats.TotalMs,
+		"formatted":    formatDuration(stats.TotalMs),
+		"first_listen": stats.FirstListen,
+		"last_listen":  stats.LastListen,
+	})
+}
+
+/* ---------- track daily heatmap ---------- */
+
+func GetTrackDaily(c *gin.Context) {
+	spotifyID := c.Param("id")
+	if spotifyID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "track ID is required"})
+		return
+	}
+
+	from, to, err := parseDateRange(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	trackName, artistName, err := repository.GetTrackInfo(spotifyID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "track not found in listening history"})
+		return
+	}
+
+	days, err := repository.GetTrackDaily(spotifyID, from, to)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if days == nil {
+		days = []repository.DailyPlay{}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"song_id":     spotifyID,
+		"track_name":  trackName,
+		"artist_name": artistName,
+		"days":        days,
+	})
+}
+
+/* ---------- top tracks ---------- */
+
+func GetTopTracks(c *gin.Context) {
+	from, to, err := parseDateRange(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	limit := 20
+	if v := c.Query("limit"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	tracks, err := repository.GetTopTracks(from, to, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Build response with rank and formatted duration
+	type rankedTrack struct {
+		Rank          int    `json:"rank"`
+		SongID        string `json:"song_id"`
+		TrackName     string `json:"track_name"`
+		ArtistName    string `json:"artist_name"`
+		AlbumName     string `json:"album_name"`
+		AlbumCoverURL string `json:"album_cover_url"`
+		PlayCount     int    `json:"play_count"`
+		TotalMs       int64  `json:"total_ms"`
+		Formatted     string `json:"formatted"`
+	}
+
+	ranked := make([]rankedTrack, len(tracks))
+	for i, t := range tracks {
+		ranked[i] = rankedTrack{
+			Rank:          i + 1,
+			SongID:        t.SpotifyID,
+			TrackName:     t.TrackName,
+			ArtistName:    t.ArtistName,
+			AlbumName:     t.AlbumName,
+			AlbumCoverURL: t.AlbumCoverURL,
+			PlayCount:     t.PlayCount,
+			TotalMs:       t.TotalMs,
+			Formatted:     formatDuration(t.TotalMs),
+		}
+	}
+
+	// Format date strings for response
+	fromStr := ""
+	toStr := ""
+	if from != nil {
+		fromStr = from.Format("2006-01-02")
+	}
+	if to != nil {
+		toStr = to.Format("2006-01-02")
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"from":   fromStr,
+		"to":     toStr,
+		"tracks": ranked,
+		"count":  len(ranked),
+	})
+}
+
 func GetUserGenre(c *gin.Context) {
 	genre := c.Param("genre")
 	
