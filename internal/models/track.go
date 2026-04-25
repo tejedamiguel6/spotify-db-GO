@@ -36,16 +36,16 @@ type RecentlyLikedTracks struct {
 // Cron writes one row per item; no touch on tracks_on_repeat
 func InsertRecentlyPlayed(
 	spotifyID, name, artist, album string, albumCoverURL string, genre string,
-	playedAt time.Time,
+	durationMs int, playedAt time.Time,
 ) error {
 
 	_, err := repository.Pool.Exec(context.Background(), `
 		INSERT INTO recently_played
 		      (spotify_song_id, track_name, artist_name, album_name, album_cover_url, genre,
-		       played_at, source)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		       duration_ms, played_at, source)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		ON CONFLICT DO NOTHING`,
-		spotifyID, name, artist, album, albumCoverURL, genre, playedAt, "cron")
+		spotifyID, name, artist, album, albumCoverURL, genre, durationMs, playedAt, "cron")
 	return err
 }
 

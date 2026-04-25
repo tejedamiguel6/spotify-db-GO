@@ -109,6 +109,7 @@ func recoverRecentlyPlayed(accessToken string, startDate time.Time) {
 			item.Track.Album.Name,
 			albumCoverURL,
 			genre,
+			item.Track.DurationMs,
 			item.PlayedAt,
 		)
 		if err != nil {

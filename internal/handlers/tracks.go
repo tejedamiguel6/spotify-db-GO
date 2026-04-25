@@ -22,6 +22,132 @@ import (
 // Global rate limiter for cron jobs
 var cronRateLimiter *utils.RateLimiter
 
+/* ---------- top played tracks within a date range ---------- */
+// rankedTopTrack is the JSON shape of one row in the GET /top-tracks response.
+type rankedTopTrack struct {
+	Rank          int    `json:"rank"`
+	SongID        string `json:"song_id"`
+	TrackName     string `json:"track_name"`
+	ArtistName    string `json:"artist_name"`
+	AlbumName     string `json:"album_name"`
+	AlbumCoverURL string `json:"album_cover_url"`
+	PlayCount     int    `json:"play_count"`
+	TotalMs       int64  `json:"total_ms"`
+	Formatted     string `json:"formatted"`
+}
+
+func GetTopTracks(c *gin.Context) {
+	const dateLayout = "2006-01-02"
+	const defaultLimit = 20
+	const maxLimit = 200
+
+	fromStr := c.Query("from")
+	toStr := c.Query("to")
+	limitStr := c.Query("limit")
+
+	var from, to time.Time
+	if fromStr != "" {
+		t, err := time.Parse(dateLayout, fromStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid 'from' date, expected YYYY-MM-DD"})
+			return
+		}
+		from = t
+	}
+	if toStr != "" {
+		t, err := time.Parse(dateLayout, toStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid 'to' date, expected YYYY-MM-DD"})
+			return
+		}
+		// Live API treats `to` as inclusive of the entire day.
+		to = t.AddDate(0, 0, 1)
+	}
+
+	limit := defaultLimit
+	if limitStr != "" {
+		n, err := strconv.Atoi(limitStr)
+		if err != nil || n <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid 'limit', must be a positive integer"})
+			return
+		}
+		if n > maxLimit {
+			n = maxLimit
+		}
+		limit = n
+	}
+
+	rows, err := repository.GetTopTracks(from, to, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch top tracks", "details": err.Error()})
+		return
+	}
+
+	tracks := make([]rankedTopTrack, len(rows))
+	for i, r := range rows {
+		tracks[i] = rankedTopTrack{
+			Rank:          i + 1,
+			SongID:        r.SpotifySongID,
+			TrackName:     r.TrackName,
+			ArtistName:    r.ArtistName,
+			AlbumName:     r.AlbumName,
+			AlbumCoverURL: r.AlbumCoverURL,
+			PlayCount:     r.PlayCount,
+			TotalMs:       r.TotalMs,
+			Formatted:     formatMs(r.TotalMs),
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"count":  len(tracks),
+		"from":   fromStr,
+		"to":     toStr,
+		"tracks": tracks,
+	})
+}
+
+/* ---------- listening time statistics (duration-aware sibling of /collection-stats) ---------- */
+func formatMs(ms int64) string {
+	mins := ms / 60000
+	return fmt.Sprintf("%dh %dm", mins/60, mins%60)
+}
+
+func GetListeningStats(c *gin.Context) {
+	daily, err := repository.GetDailyListeningBreakdown()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch daily breakdown", "details": err.Error()})
+		return
+	}
+	byPeriod, err := repository.GetListeningTimeByPeriod()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch listening time", "details": err.Error()})
+		return
+	}
+
+	dailyOut := make([]gin.H, len(daily))
+	for i, d := range daily {
+		dailyOut[i] = gin.H{
+			"date":      d.Date,
+			"total_ms":  d.TotalMs,
+			"formatted": formatMs(d.TotalMs),
+			"count":     d.Count,
+		}
+	}
+
+	listeningTime := gin.H{}
+	for period, ms := range byPeriod {
+		listeningTime[period] = gin.H{
+			"total_ms":  ms,
+			"formatted": formatMs(ms),
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"daily_breakdown_last_30_days": dailyOut,
+		"listening_time":               listeningTime,
+	})
+}
+
 /* ---------- collection statistics ---------- */
 func GetCollectionStats(c *gin.Context) {
 	now := time.Now()
@@ -248,6 +374,7 @@ func CollectRecentTracks() {
 			it.Track.Album.Name,
 			albumCoverURL,
 			genre,
+			it.Track.DurationMs,
 			it.PlayedAt,
 		)
 		if err != nil {

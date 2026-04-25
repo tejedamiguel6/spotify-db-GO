@@ -108,6 +108,7 @@ func ensureTablesExist() error {
 		album_name TEXT,
 		album_cover_url TEXT,
 		genre TEXT,
+		duration_ms INTEGER,
 		played_at TIMESTAMP NOT NULL,
 		source VARCHAR(50) DEFAULT 'cron',
 		created_at TIMESTAMP DEFAULT NOW(),
@@ -116,6 +117,10 @@ func ensureTablesExist() error {
 
 	if _, err := Pool.Exec(ctx, recentlyPlayedTable); err != nil {
 		return fmt.Errorf("failed to create recently_played table: %v", err)
+	}
+
+	if _, err := Pool.Exec(ctx, `ALTER TABLE recently_played ADD COLUMN IF NOT EXISTS duration_ms INTEGER`); err != nil {
+		return fmt.Errorf("failed to ensure duration_ms column: %v", err)
 	}
 
 	// Create useful indexes
@@ -215,6 +220,133 @@ func HasHistoricalData() (bool, error) {
 		return false, fmt.Errorf("failed to check historical data: %v", err)
 	}
 	return count > 0, nil
+}
+
+// DailyListeningStat is one day's row in /listening-stats daily_breakdown_last_30_days.
+type DailyListeningStat struct {
+	Date    string `json:"date"`
+	TotalMs int64  `json:"total_ms"`
+	Count   int    `json:"count"`
+}
+
+// GetDailyListeningBreakdown returns per-day aggregates for the last 30 days
+// (only days with at least one play are included).
+func GetDailyListeningBreakdown() ([]DailyListeningStat, error) {
+	query := `
+		SELECT
+			TO_CHAR(DATE(played_at), 'YYYY-MM-DD') AS date,
+			COALESCE(SUM(duration_ms), 0)          AS total_ms,
+			COUNT(*)                               AS count
+		FROM recently_played
+		WHERE played_at >= NOW() - INTERVAL '30 days'
+		GROUP BY DATE(played_at)
+		ORDER BY DATE(played_at) DESC
+	`
+	rows, err := Pool.Query(context.Background(), query)
+	if err != nil {
+		return nil, fmt.Errorf("failed daily listening breakdown: %v", err)
+	}
+	defer rows.Close()
+
+	results := make([]DailyListeningStat, 0, 30)
+	for rows.Next() {
+		var s DailyListeningStat
+		if err := rows.Scan(&s.Date, &s.TotalMs, &s.Count); err != nil {
+			return nil, err
+		}
+		results = append(results, s)
+	}
+	return results, nil
+}
+
+// GetListeningTimeByPeriod returns total_ms summed for each named period,
+// matching the periods used by /collection-stats.
+func GetListeningTimeByPeriod() (map[string]int64, error) {
+	query := `
+		SELECT
+			COALESCE(SUM(duration_ms) FILTER (WHERE played_at >= NOW() - INTERVAL '24 hours'), 0) AS last_24_hours,
+			COALESCE(SUM(duration_ms) FILTER (WHERE played_at >= NOW() - INTERVAL '7 days'),     0) AS last_week,
+			COALESCE(SUM(duration_ms) FILTER (WHERE played_at >= NOW() - INTERVAL '1 month'),    0) AS last_month,
+			COALESCE(SUM(duration_ms) FILTER (WHERE played_at >= NOW() - INTERVAL '3 months'),   0) AS last_3_months,
+			COALESCE(SUM(duration_ms),                                                            0) AS all_time
+		FROM recently_played
+	`
+	var l24, lw, lm, l3m, all int64
+	if err := Pool.QueryRow(context.Background(), query).Scan(&l24, &lw, &lm, &l3m, &all); err != nil {
+		return nil, fmt.Errorf("failed listening time by period: %v", err)
+	}
+	return map[string]int64{
+		"last_24_hours": l24,
+		"last_week":     lw,
+		"last_month":    lm,
+		"last_3_months": l3m,
+		"all_time":      all,
+	}, nil
+}
+
+// TopTrack is one row of the /top-tracks aggregation
+type TopTrack struct {
+	SpotifySongID string `json:"song_id"`
+	TrackName     string `json:"track_name"`
+	ArtistName    string `json:"artist_name"`
+	AlbumName     string `json:"album_name"`
+	AlbumCoverURL string `json:"album_cover_url"`
+	PlayCount     int    `json:"play_count"`
+	TotalMs       int64  `json:"total_ms"`
+}
+
+// GetTopTracks aggregates recently_played by song and returns the highest-played
+// tracks within the given window. Pass a zero time.Time to leave that bound open.
+// Tie-breaker: total_ms DESC, then spotify_song_id ASC for determinism.
+func GetTopTracks(from, to time.Time, limit int) ([]TopTrack, error) {
+	query := `
+		SELECT
+			spotify_song_id,
+			MAX(track_name)                     AS track_name,
+			COALESCE(MAX(artist_name), '')      AS artist_name,
+			COALESCE(MAX(album_name), '')       AS album_name,
+			COALESCE(MAX(album_cover_url), '')  AS album_cover_url,
+			COUNT(*)                            AS play_count,
+			COALESCE(SUM(duration_ms), 0)       AS total_ms
+		FROM recently_played
+		WHERE ($1::timestamp IS NULL OR played_at >= $1)
+		  AND ($2::timestamp IS NULL OR played_at <  $2)
+		GROUP BY spotify_song_id
+		ORDER BY play_count DESC, total_ms DESC, spotify_song_id ASC
+		LIMIT $3
+	`
+
+	var fromArg, toArg any
+	if !from.IsZero() {
+		fromArg = from
+	}
+	if !to.IsZero() {
+		toArg = to
+	}
+
+	rows, err := Pool.Query(context.Background(), query, fromArg, toArg, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query top tracks: %v", err)
+	}
+	defer rows.Close()
+
+	results := make([]TopTrack, 0, limit)
+	for rows.Next() {
+		var t TopTrack
+		if err := rows.Scan(
+			&t.SpotifySongID,
+			&t.TrackName,
+			&t.ArtistName,
+			&t.AlbumName,
+			&t.AlbumCoverURL,
+			&t.PlayCount,
+			&t.TotalMs,
+		); err != nil {
+			return nil, fmt.Errorf("scan top tracks row: %v", err)
+		}
+		results = append(results, t)
+	}
+	return results, nil
 }
 
 // GetArtistsByGenre returns unique artists from specified table that match the given genre
