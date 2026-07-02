@@ -119,8 +119,20 @@ func main() {
 	router.GET("/listening-stats", handlers.GetListeningStats)
 	router.POST("/backfill-duration", handlers.BackfillDurationHandler)
 
+	/* Embedded-friendly endpoints (Raspberry Pi / Arduino / ESP32) */
+	router.GET("/health", handlers.Health)
+	router.GET("/embedded/now", handlers.EmbeddedNow)
+	router.GET("/events", handlers.NowPlayingEvents)
+
 	/* NEW: start the background cron in its own goroutine */
 	go handlers.StartSpotifyCron()
 
-	router.Run(":8080")
+	/* Poller that keeps the now-playing cache fresh for /embedded/now and /events */
+	go handlers.StartNowPlayingPoller()
+
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	router.Run(":" + port)
 }

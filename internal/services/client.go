@@ -163,13 +163,17 @@ type CurrentlyPlaying struct {
 	ID         string      `json:"id"`
 	Timestamp  int         `json:"timestamp"`
 	ProgressMS int         `json:"progress_ms"`
+	IsPlaying  bool        `json:"is_playing"`
 	Item       TrackObject `json:"item"`
 }
 
 type TrackObject struct {
-	Album      Album  `json:"album"`
-	Name       string `json:"name"`
-	Popularity int    `json:"popularity"`
+	ID         string             `json:"id"`
+	Album      Album              `json:"album"`
+	Name       string             `json:"name"`
+	DurationMs int                `json:"duration_ms"`
+	Artists    []SimplifiedArtist `json:"artists"`
+	Popularity int                `json:"popularity"`
 }
 
 func GetRecentlyPlayed(accessToken string, limit int) ([]PlayedItem, error) {
@@ -299,6 +303,11 @@ func GetCurrentlyListening(accessToken string) (*CurrentlyPlaying, error) {
 	}
 
 	defer res.Body.Close()
+
+	// 204 means nothing is playing right now — not an error
+	if res.StatusCode == http.StatusNoContent {
+		return nil, nil
+	}
 
 	if res.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("failed to get currently listening to tracks")
