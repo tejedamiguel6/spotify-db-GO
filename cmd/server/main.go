@@ -109,6 +109,9 @@ func main() {
 	/* NEW: endpoint to store (or rotate) refresh_token */
 	router.POST("/save-refresh", handlers.SaveRefresh)
 
+	/* AI song analysis (song-analyzer enrichment, cached in Postgres) */
+	router.GET("/track-analysis", handlers.TrackAnalysis)
+
 	/* Track detail endpoints */
 	router.GET("/tracks/:id/streak", handlers.GetTrackStreak)
 	router.GET("/tracks/:id/stats", handlers.GetTrackStats)

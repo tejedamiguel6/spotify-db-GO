@@ -5,11 +5,12 @@ go 1.23.0
 toolchain go1.24.5
 
 require (
-	github.com/gin-contrib/cors v1.7.5
 	github.com/gin-gonic/gin v1.10.0
 	github.com/jackc/pgx/v5 v5.7.4
 	github.com/joho/godotenv v1.5.1
 )
+
+require github.com/tejedamiguel6/song-analyzer-golang v0.0.0-20260707192702-2d4f1a65ad98
 
 require (
 	github.com/bytedance/sonic v1.13.2 // indirect
@@ -36,7 +37,7 @@ require (
 	github.com/rogpeppe/go-internal v1.8.0 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.2.12 // indirect
-	github.com/ulule/limiter/v3 v3.11.2 // indirect
+	github.com/ulule/limiter/v3 v3.11.2
 	golang.org/x/arch v0.16.0 // indirect
 	golang.org/x/crypto v0.37.0 // indirect
 	golang.org/x/net v0.39.0 // indirect
