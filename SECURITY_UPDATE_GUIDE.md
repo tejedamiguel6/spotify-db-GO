@@ -8,7 +8,7 @@ Your API is now protected with **two layers of security**:
 - **Protection:** Prevents DDoS attacks and resource exhaustion
 - **Response:** Returns 429 (Too Many Requests) when limit exceeded
 
-### 2. **API Key Authentication**- **Requirement:** All requests (except `/save-refresh`) must include API key
+### 2. **API Key Authentication**- **Requirement:** Every write request (POST, PATCH, DELETE), including `/save-refresh`, must include the API key. GET requests are public and read-only. If `API_KEY` isn't configured on the server, all writes are refused (fails closed).
 - **Header:** `X-API-Key: your-api-key-here`
 - **Protection:** Prevents unauthorized access
 
@@ -133,13 +133,16 @@ done
 ### Test API Key Protection:
 
 ```bash
-# Without API key - should get 401 Unauthorized
+# Reads are public - should succeed without a key
 curl https://api-spotify-tracks.mtejeda.co/collection-stats
 
-# With API key - should succeed
-curl -H "X-API-Key: <your_api_key>" \
-  https://api-spotify-tracks.mtejeda.co/collection-stats
+# Writes without the key - should get 401 Unauthorized (nothing is changed)
+curl -X POST https://api-spotify-tracks.mtejeda.co/save-refresh \
+  -H "Content-Type: application/json" -d '{}'
 ```
+
+Don't test the "with key" case against `/save-refresh` with a real body: it
+replaces the stored Spotify refresh token.
 
 ---
 
@@ -152,15 +155,15 @@ curl -H "X-API-Key: <your_api_key>" \
 **Database overload** - Prevents too many DB queries
 
 ### API Key Protects Against:
-**Unauthorized access** - Only your frontend can access
-**Public scraping** - Random users can't harvest data
-**Bot attacks** - Automated tools can't access without key
+**Unauthorized writes** - Only holders of the key can change data
+**Token hijacking** - Nobody can replace the stored Spotify refresh token without the key
+**Bot attacks** - Automated tools can't write without the key
 **Abuse** - Must know the key to use the API
 
 ### Combined Protection:
 - Even if someone gets your API key, they can only make 100 req/min
 - Rate limiting works per IP, so multiple IPs with same key are still limited individually
-- `/save-refresh` endpoint bypasses API key (for initial token setup only)
+- Read-only GET endpoints stay public (rate limited); every write, including `/save-refresh`, needs the key
 
 ---
 
