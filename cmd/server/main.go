@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"time"
 
@@ -113,6 +114,7 @@ func main() {
 	router.GET("/tracks/:id/stats", handlers.GetTrackStats)
 	router.GET("/tracks/:id/daily", handlers.GetTrackDaily)
 	router.GET("/top-tracks", handlers.GetTopTracks)
+	router.GET("/calendar", handlers.GetCalendar)
 
 	/* Analytics endpoints */
 	router.GET("/collection-stats", handlers.GetCollectionStats)
@@ -124,11 +126,17 @@ func main() {
 	router.GET("/embedded/now", handlers.EmbeddedNow)
 	router.GET("/events", handlers.NowPlayingEvents)
 
-	/* NEW: start the background cron in its own goroutine */
-	go handlers.StartSpotifyCron()
+	// DISABLE_CRON=true runs the API only: no Spotify polling, no token
+	// refreshes, no background writes. Use it for local testing.
+	if os.Getenv("DISABLE_CRON") == "true" {
+		fmt.Println("⏸️  DISABLE_CRON=true: background cron and now-playing poller are off")
+	} else {
+		/* NEW: start the background cron in its own goroutine */
+		go handlers.StartSpotifyCron()
 
-	/* Poller that keeps the now-playing cache fresh for /embedded/now and /events */
-	go handlers.StartNowPlayingPoller()
+		/* Poller that keeps the now-playing cache fresh for /embedded/now and /events */
+		go handlers.StartNowPlayingPoller()
+	}
 
 	port := os.Getenv("PORT")
 	if port == "" {
