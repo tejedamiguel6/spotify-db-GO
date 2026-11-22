@@ -138,6 +138,10 @@ func ensureTablesExist() error {
 		}
 	}
 
+	if err := EnsureEnrichmentsTable(); err != nil {
+		return err
+	}
+
 	fmt.Println("🏗️  Database schema verified/created")
 	return nil
 }
