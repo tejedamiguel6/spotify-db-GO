@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+#
+# Pre-commit security scan. Blocks the commit if a staged change looks like it
+# leaks a secret or tracks a build artifact / debug dump.
+# Bypass intentionally with:  git commit --no-verify   (use sparingly)
+
+set -euo pipefail
+red()  { printf '\033[31m%s\033[0m\n' "$1"; }
+yellow(){ printf '\033[33m%s\033[0m\n' "$1"; }
+
+fail=0
+
+# Only look at what is actually staged (added/copied/modified), diffed content.
+staged_files=$(git diff --cached --name-only --diff-filter=ACM)
+[ -z "$staged_files" ] && exit 0
+
+# 1) Secret-like values in staged diff content.
+#    Patterns: assignments to *_key/secret/token/password with a real value,
+#    AWS keys, private-key headers, bearer tokens, long base64 secrets.
+secret_hits=$(git diff --cached -U0 --diff-filter=ACM -- $staged_files \
+  | grep -nE '^\+' \
+  | grep -vE '^\+.*(<your_|your_|<paste|example|placeholder|xxxx|\.\.\.|\$\{|process\.env|os\.Getenv)' \
+  | grep -inE \
+    'AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|(api[_-]?key|secret|token|password|passwd|client[_-]?secret)["'"'"' ]*[:=]["'"'"' ]*[A-Za-z0-9/+_=-]{16,}|X-API-Key["'"'"' :]+[A-Za-z0-9/+=]{16,}' \
+  || true)
+
+if [ -n "$secret_hits" ]; then
+  red "✖ Possible secret in staged changes:"
+  echo "$secret_hits" | sed 's/^/    /'
+  fail=1
+fi
+
+# 2) Binaries / build artifacts / debug dumps being tracked.
+for f in $staged_files; do
+  case "$f" in
+    DEBUG_*.json|*/DEBUG_*.json) red "✖ Debug dump staged: $f"; fail=1 ;;
+    server|*/server)             red "✖ Compiled binary staged: $f"; fail=1 ;;
+  esac
+  # Large files (>1MB) are almost never source.
+  if [ -f "$f" ]; then
+    sz=$(wc -c < "$f" 2>/dev/null || echo 0)
+    if [ "$sz" -gt 1048576 ]; then
+      yellow "! Large file staged (${sz} bytes): $f — is this meant to be tracked?"
+      fail=1
+    fi
+  fi
+done
+
+if [ "$fail" -ne 0 ]; then
+  echo
+  red "Commit blocked by pre-commit security scan."
+  echo "If this is a false positive, review carefully, then bypass with: git commit --no-verify"
+  exit 1
+fi
+exit 0
