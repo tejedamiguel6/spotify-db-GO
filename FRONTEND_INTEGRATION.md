@@ -253,7 +253,7 @@ export const useNowListening = () => {
 | GET | `/collection-stats` | – | Track counts by fixed periods |
 | GET | `/listening-stats` | – | Listening time by fixed periods + last 30 days |
 | PATCH | `/mostPlayedTracks/track/:spotify_song_id` | – | Update a track's play_count |
-| POST | `/save-refresh` | – | Store/rotate Spotify refresh token (no auth) |
+| POST | `/save-refresh` | – | Store/rotate Spotify refresh token (requires `X-API-Key`) |
 | POST | `/backfill-duration` | – | Admin: backfill `duration_ms` from Spotify |
 
 ---
@@ -410,14 +410,14 @@ await fetch(`${base}/mostPlayedTracks/track/${songId}`, {
 });
 ```
 
-#### `POST /save-refresh` — store the Spotify refresh token (no auth)
+#### `POST /save-refresh` — store the Spotify refresh token
 
-This endpoint **bypasses the API key** since it's used during initial OAuth setup.
+**Requires `X-API-Key`.** Call it from a trusted script or server, not the browser.
 
 ```js
 await fetch(`${base}/save-refresh`, {
   method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
+  headers: { 'Content-Type': 'application/json', 'X-API-Key': API_KEY },
   body: JSON.stringify({ refresh_token: 'spotify_refresh_token_here' }),
 });
 ```

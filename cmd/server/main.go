@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/subtle"
 	"fmt"
 	"os"
 	"time"
@@ -30,23 +31,18 @@ func main() {
 
 	// API Key Authentication Middleware
 	router.Use(func(c *gin.Context) {
-		// Allow /save-refresh to bypass (for initial setup)
-		if c.Request.URL.Path == "/save-refresh" {
-			c.Next()
-			return
-		}
-
 		// For public portfolio: Allow all GET requests (read-only)
 		if c.Request.Method == "GET" {
 			c.Next()
 			return
 		}
 
-		// Require API key for write operations (POST, PATCH, DELETE)
+		// Require API key for write operations (POST, PATCH, DELETE),
+		// including /save-refresh. Fail closed if API_KEY is not configured.
 		apiKey := c.GetHeader("X-API-Key")
 		expectedKey := os.Getenv("API_KEY")
 
-		if apiKey != expectedKey {
+		if expectedKey == "" || subtle.ConstantTimeCompare([]byte(apiKey), []byte(expectedKey)) != 1 {
 			c.JSON(401, gin.H{"error": "Unauthorized"})
 			c.Abort()
 			return
