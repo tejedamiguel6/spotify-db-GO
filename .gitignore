@@ -20,3 +20,16 @@ DEBUG_*.json
 # Compiled binaries
 /server
 /bin/
+
+# Private ops docs and deploy scripts (kept locally, not published)
+SECURITY_UPDATE_GUIDE.md
+API_KEYS_README.md
+PORTFOLIO_SETUP.md
+FRONTEND_INTEGRATION.md
+DATABASE_OPTIMIZATION.md
+deploy-to-ecs.sh
+ecs-task-definition.json
+setup-aws-secrets.sh
+
+# Local Neon IDs for scripts/run-local-test.sh
+scripts/.local-test.env

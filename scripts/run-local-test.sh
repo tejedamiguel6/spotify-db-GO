@@ -1,18 +1,29 @@
 #!/usr/bin/env bash
 # Run the API locally against the Neon "local-test" branch with the cron off.
 # It can never touch the live database: it refuses to start if the
-# connection string points at the live (development) endpoint.
+# connection string points at the live endpoint.
+#
+# Needs two values, from the environment or from scripts/.local-test.env
+# (gitignored, never committed):
+#   NEON_PROJECT_ID     the Neon project ID
+#   NEON_LIVE_ENDPOINT  the endpoint ID of the live branch (e.g. "ep-xxxx-xxxx")
 set -euo pipefail
-
-PROJECT_ID="damp-salad-66273459"
-TEST_BRANCH="local-test"
-LIVE_ENDPOINT="ep-withered-boat"   # Neon "development" branch = live data
 
 cd "$(dirname "$0")/.."
 
-DATABASE_URL="$(neonctl connection-string "$TEST_BRANCH" --project-id "$PROJECT_ID" --pooled)"
+if [[ -f scripts/.local-test.env ]]; then
+  # shellcheck disable=SC1091
+  source scripts/.local-test.env
+fi
 
-if [[ -z "$DATABASE_URL" || "$DATABASE_URL" == *"$LIVE_ENDPOINT"* ]]; then
+: "${NEON_PROJECT_ID:?Set NEON_PROJECT_ID (or add it to scripts/.local-test.env)}"
+: "${NEON_LIVE_ENDPOINT:?Set NEON_LIVE_ENDPOINT (or add it to scripts/.local-test.env)}"
+
+TEST_BRANCH="local-test"
+
+DATABASE_URL="$(neonctl connection-string "$TEST_BRANCH" --project-id "$NEON_PROJECT_ID" --pooled)"
+
+if [[ -z "$DATABASE_URL" || "$DATABASE_URL" == *"$NEON_LIVE_ENDPOINT"* ]]; then
   echo "Refusing to start: connection string is empty or points at the live database." >&2
   exit 1
 fi
