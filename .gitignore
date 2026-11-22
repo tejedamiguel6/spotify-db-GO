@@ -17,5 +17,6 @@ CHANGELOGS/
 # Debug files
 DEBUG_*.json
 
-# Compiled binaries (root level only)
+# Compiled binaries
 /server
+/bin/
