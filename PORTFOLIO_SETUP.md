@@ -77,7 +77,8 @@ fetch('https://api-spotify-tracks.mtejeda.co/mostPlayedTracks/track/SONG_ID', {
 fetch('https://api-spotify-tracks.mtejeda.co/save-refresh', {
   method: 'POST',
   headers: {
-    'Content-Type': 'application/json'
+    'Content-Type': 'application/json',
+    'X-API-Key': API_KEY
   },
   body: JSON.stringify({ refresh_token: 'your_token' })
 });
