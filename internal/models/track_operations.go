@@ -208,7 +208,7 @@ func GetAllRecentPlayedHistory(pool *pgxpool.Pool) ([]RecentlyPlayedTrack, error
 			played_at,
 			source,
   			COALESCE(album_cover_url, '') AS album_cover_url,
-			genre,
+			COALESCE(genre, '') AS genre,
 			COALESCE(duration_ms, 0) AS duration_ms
 		FROM recently_played
 		ORDER BY played_at DESC
