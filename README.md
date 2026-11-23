@@ -6,7 +6,7 @@ A Go-based REST API service that automatically collects and tracks your Spotify 
 
 **Live API:** https://api-spotify-tracks.mtejeda.co
 
-**Status:** Deployed on AWS ECS Fargate with HTTPS, custom domain, and automatic data collection.
+**Status:** Running in production with HTTPS and automatic data collection.
 
 ## ✨ Features
 
@@ -190,6 +190,7 @@ Returns what you're currently listening to on Spotify.
 ```http
 POST /mostPlayedTracks
 Content-Type: application/json
+X-API-Key: <your API key>
 
 {
   "spotify_song_id": "4iV5W9uYEdYUVa79Axb7Rh",
@@ -207,6 +208,7 @@ Content-Type: application/json
 ```http
 PATCH /mostPlayedTracks/track/:spotify_song_id
 Content-Type: application/json
+X-API-Key: <your API key>
 
 {
   "play_count": 5
@@ -231,6 +233,7 @@ Returns comprehensive analytics including:
 ```http
 POST /save-refresh
 Content-Type: application/json
+X-API-Key: <your API key>
 
 {
   "refresh_token": "your_spotify_refresh_token"
@@ -305,89 +308,32 @@ go build -ldflags="-s -w" -o spotify-tracker cmd/server/main.go
 | `DATABASE_URL` | PostgreSQL connection string | ✅ |
 | `SPOTIFY_CLIENT_ID` | Your Spotify app's client ID | ✅ |
 | `SPOTIFY_CLIENT_SECRET` | Your Spotify app's client secret | ✅ |
+| `API_KEY` | Key required on every write request (`X-API-Key`); writes are refused if unset | ✅ |
 | `PORT` | Server port (default: 8080) | ❌ |
 
-## 🚀 Production Deployment (AWS ECS)
+## 🛡️ Security
 
-### Current Infrastructure
+**Reads are public, writes are locked.**
 
-**Deployed to AWS ECS Fargate in `us-east-2`:**
-- **API URL**: https://api-spotify-tracks.mtejeda.co
-- **Task Definition**: `spotify-track-db:8` (optimized version)
-- **Resources**: 0.25 vCPU, 512 MB RAM
-- **Monthly Cost**: ~$49/month (AWS: $30 + Neon: $19)
+- **GET endpoints are public.** They only return listening data that is meant to be shown on the website. Every IP is rate limited to 100 requests a minute.
+- **Every write needs an API key.** `POST`, `PATCH` and `DELETE` requests, including `POST /save-refresh` (which stores the Spotify refresh token), must send a valid `X-API-Key` header. Requests without it get `401 Unauthorized`.
+- **It fails closed.** If the server starts without an `API_KEY` configured, every write is refused rather than allowed.
+- **Constant-time comparison.** The key is checked with `crypto/subtle.ConstantTimeCompare`, so response timing doesn't leak how much of a guessed key was right.
+- **Paid AI calls are guarded too.** Cached track analyses are public, but generating a new one needs the same key.
+- **The key is rotated** whenever it may have been exposed. It lives only in the server's secret store and in the website's server-side environment. It is never sent to a browser.
 
-### Security & Access Control
+Found a security issue? Please open a private security advisory on GitHub rather than a public issue.
 
-**Public Access (No Auth Required):**
-- ✅ All **GET** endpoints - Anyone can read your music data for portfolio
-- ✅ Rate limited to 100 requests/minute per IP
+## 🚀 Deployment
 
-**Protected Access (API Key Required):**
-- 🔐 **POST/PATCH/DELETE** endpoints - Write operations require `X-API-Key` header
-- 🔐 API key stored in AWS Secrets Manager
-
-### Deployment
-
-**Quick Deployment:**
-```bash
-./deploy-to-ecs.sh
-```
-
-This script:
-1. Builds Docker image for `linux/amd64` (required for AWS Fargate)
-2. Pushes to ECR
-3. Registers new task definition
-4. Forces ECS service deployment (zero-downtime rolling update)
-
-**See detailed guides:**
-- [AWS_DEPLOYMENT_SESSION.md](AWS_DEPLOYMENT_SESSION.md) - Complete deployment history
-- [AWS_DEPLOYMENT_GUIDE_FOR_DEVELOPERS.md](AWS_DEPLOYMENT_GUIDE_FOR_DEVELOPERS.md) - Educational guide
-- [DEPLOYMENT.md](DEPLOYMENT.md) - Quick reference
-- [DATABASE_OPTIMIZATION.md](DATABASE_OPTIMIZATION.md) - Database quota optimization details
-
-### Recent Optimizations (Jan 2026)
-
-**Problem:** Hit Neon's 5 GB/month data transfer quota due to aggressive polling (90 seconds)
-
-**Solution Applied:**
-- Reduced cron frequency: **90 seconds → 5 minutes** (70% reduction)
-- Optimized genre updates: **Every run → Every 30 minutes** (83% reduction)
-- Reduced batch size: **150 tracks → 50 tracks** (67% reduction)
-
-**Results:**
-- **Before**: ~13,000 queries/day (~6-8 GB/month) ❌
-- **After**: ~2,500 queries/day (~1.8 GB/month) ✅
-- **Impact**: 80% reduction in database load, well within quotas
-
-### Frontend Integration
-
-For portfolio sites, see [PORTFOLIO_SETUP.md](PORTFOLIO_SETUP.md) for:
-- Public API access patterns
-- React component examples
-- Real-time "now playing" widgets
-- CORS configuration
-
-### Monitoring
-
-```bash
-# View logs
-aws logs tail /ecs/spotify-track-db --follow --region us-east-2
-
-# Check service status
-aws ecs describe-services --cluster spotify-cluster --services spotify-track-db --region us-east-2
-
-# View current task
-aws ecs list-tasks --cluster spotify-cluster --service-name spotify-track-db --region us-east-2
-```
+The API ships as a small Docker image (see `Dockerfile`) and runs on any container host. Configure it with the environment variables above plus `API_KEY`. Keep those values in your host's secret manager, never in the image or the repository.
 
 ## 📝 Notes
 
 - **Spotify API Limits**: The system respects Spotify's rate limits and handles them gracefully with retry logic
 - **Data Retention**: All data is stored permanently; implement your own cleanup policies if needed
-- **Token Management**: Refresh tokens are automatically managed and stored securely in database
-- **Background Processing**: Optimized cron job starts automatically and runs every 5 minutes
-- **Database**: Requires Neon Launch plan ($19/month) or equivalent with 100 GB data transfer
+- **Token Management**: Refresh tokens are automatically managed and stored in the database
+- **Background Processing**: The collection cron starts automatically: every 5 minutes during the day, every 15 minutes overnight
 
 ## 🤝 Contributing
 
@@ -405,49 +351,14 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 | Document | Purpose |
 |----------|---------|
-| [AWS_DEPLOYMENT_SESSION.md](AWS_DEPLOYMENT_SESSION.md) | Complete AWS deployment session history |
-| [AWS_DEPLOYMENT_GUIDE_FOR_DEVELOPERS.md](AWS_DEPLOYMENT_GUIDE_FOR_DEVELOPERS.md) | Educational AWS guide for beginners |
-| [DEPLOYMENT.md](DEPLOYMENT.md) | Quick deployment reference |
-| [PORTFOLIO_SETUP.md](PORTFOLIO_SETUP.md) | Frontend integration guide for portfolio sites |
-| [DATABASE_OPTIMIZATION.md](DATABASE_OPTIMIZATION.md) | Database query optimization details |
-| [SECURITY_UPDATE_GUIDE.md](SECURITY_UPDATE_GUIDE.md) | Security features and API key setup |
-| [API_KEYS_README.md](API_KEYS_README.md) | Environment variables and API key reference |
-| [FRONTEND_INTEGRATION.md](FRONTEND_INTEGRATION.md) | Detailed frontend integration examples |
-| [BACKUP_GUIDE.md](BACKUP_GUIDE.md) | Database backup and recovery procedures |
-| [RECOVERY.md](RECOVERY.md) | Database recovery instructions |
-
-## ⚠️ Current Status (For Next Session)
-
-**Deployment Status:**
-- ✅ Optimized code deployed (task-definition:8)
-- ✅ Running on AWS ECS Fargate
-- ✅ Security: Rate limiting + API key protection
-- ✅ CORS: Public GET access, protected writes
-
-**Database Status:**
-- ❌ **Neon database currently SUSPENDED** (exceeded 5 GB free tier quota)
-- ⏳ **Waiting for upgrade to Launch plan** ($19/month, 100 GB transfer)
-- 📊 Optimizations deployed will reduce usage by 80% (from 13K to 2.5K queries/day)
-
-**Next Steps:**
-1. Upgrade Neon to Launch plan - database will reactivate instantly
-2. Verify cron job runs at new 5-minute intervals
-3. Monitor database usage to confirm optimization works
-4. Build frontend portfolio to showcase the data
-
-**Important Files:**
-- `.env.api-key` - Contains backend API key (gitignored)
-- `deploy-to-ecs.sh` - One-command deployment script
-- `cmd/server/main.go` - Main application entry with security middleware
-- `internal/handlers/tracks.go:132` - Cron interval configuration (5 minutes)
+| [EMBEDDED_INTEGRATION.md](EMBEDDED_INTEGRATION.md) | Using the public endpoints from microcontrollers and scripts |
+| [ARDUINO_CLIENT_README.md](ARDUINO_CLIENT_README.md) | Arduino / ESP32 client reference |
 
 ## 🔗 Links
 
 - [Spotify Web API Documentation](https://developer.spotify.com/documentation/web-api/)
 - [PostgreSQL Documentation](https://www.postgresql.org/docs/)
 - [Gin Framework Documentation](https://gin-gonic.com/docs/)
-- [Neon Database](https://neon.tech)
-- [AWS ECS Documentation](https://docs.aws.amazon.com/ecs/)
 
 ---
 

@@ -25,7 +25,7 @@ every 2–5 seconds without worrying about Spotify rate limits.
 | TLS | Production is HTTPS. ESP32: works out of the box (use `WiFiClientSecure` + `setInsecure()` for simplicity, or pin the cert). ESP8266: must call `client.setInsecure()` or set a fingerprint. |
 
 > **Deploy status:** the embedded endpoints exist in the codebase but may
-> not be live on production yet (they ship with the next ECS deploy). Verify
+> not be live on production yet (they ship with the next deploy). Verify
 > with `GET /health` first; if it 404s on production, develop against a
 > locally running server and the same code will work in production later.
 
